@@ -1,0 +1,11 @@
+[package]
+name = "zc-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+zc-model = { path = "../zc-model" }
+
+[dev-dependencies]
+zc-model = { path = "../zc-model" }
