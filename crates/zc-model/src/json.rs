@@ -76,31 +76,87 @@ pub fn boolean(src: &str, key: &str) -> Option<bool> {
     }
 }
 
+/// Decode the four hex digits of a `\uXXXX` escape sitting at `i`.
+fn hex4(src: &str, i: usize) -> Option<u32> {
+    u32::from_str_radix(src.get(i..i + 4)?, 16).ok()
+}
+
 /// String at `"<key>"`, with JSON escapes decoded.
+///
+/// Bytes are accumulated and decoded as UTF-8 at the end rather than pushed
+/// individually as `char`. Pushing a raw byte as a `char` reinterprets it as a
+/// code point, so every multi-byte character came out as mojibake — `é` became
+/// `Ã©`. Qwen and other models carry non-ASCII GGUF metadata, so this was
+/// reachable in ordinary use.
 pub fn string(src: &str, key: &str) -> Option<String> {
     let start = find_key(src, key)?;
     let b = src.as_bytes();
     if b.get(start) != Some(&b'"') {
         return None;
     }
-    let mut out = String::new();
+    let mut out: Vec<u8> = Vec::new();
     let mut i = start + 1;
     while i < b.len() {
         match b[i] {
             b'\\' => {
                 i += 1;
                 match b.get(i) {
-                    Some(b'n') => out.push('\n'),
-                    Some(b't') => out.push('\t'),
-                    Some(b'r') => out.push('\r'),
-                    Some(&c) => out.push(c as char),
+                    Some(b'n') => {
+                        out.push(b'\n');
+                        i += 1;
+                    }
+                    Some(b't') => {
+                        out.push(b'\t');
+                        i += 1;
+                    }
+                    Some(b'r') => {
+                        out.push(b'\r');
+                        i += 1;
+                    }
+                    // Go's encoder — which is what Ollama uses — escapes `<`,
+                    // `>` and `&` as </>/& by default, so this
+                    // branch is hit by an ordinary response, not an exotic one.
+                    // Undecoded, `&` arrived as the literal text `u0026`.
+                    Some(b'u') => {
+                        let Some(cp) = hex4(src, i + 1) else { break };
+                        i += 5;
+                        let ch = if (0xD800..0xDC00).contains(&cp) {
+                            // High surrogate: a low surrogate must follow for a
+                            // character outside the BMP.
+                            let low = (src.as_bytes().get(i) == Some(&b'\\')
+                                && src.as_bytes().get(i + 1) == Some(&b'u'))
+                            .then(|| hex4(src, i + 2))
+                            .flatten()
+                            .filter(|l| (0xDC00..0xE000).contains(l));
+                            match low {
+                                Some(l) => {
+                                    i += 6;
+                                    char::from_u32(
+                                        0x10000 + ((cp - 0xD800) << 10) + (l - 0xDC00),
+                                    )
+                                }
+                                None => None,
+                            }
+                        } else {
+                            char::from_u32(cp)
+                        };
+                        // A lone surrogate is not a character; emit U+FFFD
+                        // rather than dropping it silently.
+                        let mut buf = [0u8; 4];
+                        out.extend_from_slice(
+                            ch.unwrap_or('\u{FFFD}').encode_utf8(&mut buf).as_bytes(),
+                        );
+                    }
+                    Some(&c) => {
+                        out.push(c);
+                        i += 1;
+                    }
                     None => break,
                 }
-                i += 1;
             }
-            b'"' => return Some(out),
+            b'"' => return Some(String::from_utf8_lossy(&out).into_owned()),
             c => {
-                out.push(c as char);
+                out.push(c);
                 i += 1;
             }
         }
@@ -335,6 +391,40 @@ mod tests {
         let a = object_at(s, "a").expect("a");
         assert_eq!(a, r#"{"b":{"c":1},"d":2}"#);
         assert_eq!(number(a, "f"), None);
+    }
+
+    /// Ollama is written in Go, whose JSON encoder escapes `<`, `>` and `&` by
+    /// default. These arrive on ordinary responses, and were previously
+    /// returned as the literal text `u0026`.
+    #[test]
+    fn decodes_unicode_escapes_go_emits() {
+        let s = r#"{"name":"a&b","tpl":"<|im_start|>"}"#;
+        assert_eq!(string(s, "name").as_deref(), Some("a&b"));
+        assert_eq!(string(s, "tpl").as_deref(), Some("<|im_start|>"));
+    }
+
+    /// Multi-byte UTF-8 must survive intact. Pushing each byte as a `char`
+    /// turned "é" into "Ã©" and corrupted every non-ASCII model name.
+    #[test]
+    fn multibyte_utf8_is_not_mangled() {
+        let s = r#"{"name":"café","cn":"通义千问"}"#;
+        assert_eq!(string(s, "name").as_deref(), Some("café"));
+        assert_eq!(string(s, "cn").as_deref(), Some("通义千问"));
+    }
+
+    /// Surrogate pairs form one character; a lone surrogate is not a character
+    /// at all and must not silently vanish.
+    #[test]
+    fn handles_surrogate_pairs_and_lone_surrogates() {
+        assert_eq!(string(r#"{"e":"😀"}"#, "e").as_deref(), Some("😀"));
+        assert_eq!(string(r#"{"e":"\uD83D"}"#, "e").as_deref(), Some("\u{FFFD}"));
+    }
+
+    /// A truncated escape must terminate rather than read past the end.
+    #[test]
+    fn truncated_escape_does_not_panic() {
+        assert_eq!(string(r#"{"e":"\u00"#, "e"), None);
+        assert_eq!(string(r#"{"e":"ab\"#, "e"), None);
     }
 
     #[test]

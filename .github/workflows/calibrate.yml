@@ -28,6 +28,12 @@ on:
         default: "llama3.2:1b"
         type: string
 
+# Least privilege. Without this the job inherits whatever the repository
+# default is, which on many repos is a read/write token -- far more than a
+# workflow that only reads code and uploads artifacts has any use for.
+permissions:
+  contents: read
+
 concurrency:
   group: calibrate-${{ github.ref }}
   cancel-in-progress: true
@@ -62,6 +68,11 @@ jobs:
 
   calibrate:
     needs: test
+    # Not on pull requests. Each run installs a runtime and pulls a model on
+    # three platforms, so letting every push to every PR trigger it burns
+    # minutes for a measurement nobody reads. Calibration data is wanted from
+    # main and on demand; correctness (the `test` job) still runs on every PR.
+    if: github.event_name != 'pull_request'
     strategy:
       fail-fast: false
       matrix:
@@ -150,7 +161,10 @@ jobs:
   # separate jobs into three machines the gate can actually count.
   gate:
     needs: calibrate
-    if: always()
+    # Still runs when a platform fails, so a Windows break does not hide the
+    # data the other two produced -- but not when calibrate was skipped
+    # entirely, which would otherwise report an empty dataset on every PR.
+    if: always() && needs.calibrate.result != 'skipped'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
