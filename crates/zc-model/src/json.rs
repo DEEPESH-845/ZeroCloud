@@ -64,6 +64,18 @@ pub fn number(src: &str, key: &str) -> Option<f64> {
     rest[..end].parse().ok()
 }
 
+/// Boolean at `"<key>"`.
+pub fn boolean(src: &str, key: &str) -> Option<bool> {
+    let rest = &src[find_key(src, key)?..];
+    if rest.starts_with("true") {
+        Some(true)
+    } else if rest.starts_with("false") {
+        Some(false)
+    } else {
+        None
+    }
+}
+
 /// String at `"<key>"`, with JSON escapes decoded.
 pub fn string(src: &str, key: &str) -> Option<String> {
     let start = find_key(src, key)?;

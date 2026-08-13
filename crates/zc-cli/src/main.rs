@@ -1,5 +1,6 @@
 mod check;
 mod fit_cmd;
+mod gate_cmd;
 mod machine;
 mod verify;
 
@@ -10,6 +11,7 @@ USAGE
     zc [check]            probe hardware and predict model performance
     zc verify [MODEL]     run a real model and compare against the prediction
     zc fit                show fitted coefficients and how much evidence backs them
+    zc gate               how wrong have we been? (exits non-zero until it passes)
     zc --help
 
 Both commands run a ~20s hardware benchmark first. Nothing leaves this
@@ -23,9 +25,12 @@ fn main() {
         println!("{HELP}");
         return;
     }
-    // `fit` reads a file; no hardware probe needed.
+    // `fit` and `gate` read a file; no hardware probe needed.
     if cmd == "fit" {
         std::process::exit(fit_cmd::run());
+    }
+    if cmd == "gate" {
+        std::process::exit(gate_cmd::run());
     }
     if !matches!(cmd, "check" | "verify") {
         eprintln!("unknown command '{cmd}'\n\n{HELP}");
