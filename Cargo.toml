@@ -1,0 +1,19 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/zerocloud/zerocloud"
+
+# Dependencies declared once here, inherited by member crates with
+# `libc.workspace = true`. Keeps versions consistent across the workspace.
+[workspace.dependencies]
+libc = "0.2"
+
+[profile.release]
+lto = "thin"        # cross-crate inlining; we care about a small, fast binary
+codegen-units = 1   # slower build, better codegen
+strip = true        # drop symbols -> smaller binary (target: <5 MB)

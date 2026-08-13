@@ -1,0 +1,6 @@
+/target
+.DS_Store
+
+# Per-machine measurements. A curated cross-machine dataset would be committed
+# under a different name; this file is whatever the local `zc verify` produced.
+/data/calibration/local.jsonl
