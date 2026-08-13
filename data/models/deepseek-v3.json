@@ -1,0 +1,16 @@
+{
+  "id": "deepseek-v3",
+  "arch": "deepseek2",
+  "source": "hf:deepseek-ai/DeepSeek-V3",
+  "verified": "2026-08-13",
+  "note": "MLA stores one compressed latent per layer instead of separate K and V, so KV is ~70KB/token for a 671B model - less than a quarter of a 70B GQA model.",
+  "n_layers": 61,
+  "n_embd": 7168,
+  "n_vocab": 129280,
+  "params": 671000000000,
+  "attention": { "kind": "mla", "kv_lora_rank": 512, "rope_head_dim": 64 },
+  "moe": { "n_expert": 256, "n_active": 8, "expert_params": 44040192, "shared_params": 17000000000 },
+  "quants": [
+    { "name": "IQ2_XXS", "bytes": 200000000000, "family": "i_quant" }
+  ]
+}

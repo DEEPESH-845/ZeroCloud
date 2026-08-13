@@ -1,0 +1,17 @@
+{
+  "id": "qwen3-30b-a3b",
+  "arch": "qwen3moe",
+  "source": "hf:Qwen/Qwen3-30B-A3B",
+  "verified": "2026-08-13",
+  "note": "128 experts, top-8. Each expert is gate+up+down over 2048x768 = 4.72M params; 128 experts x 48 layers = 29.0B routed, leaving ~1.5B shared. Active per token 1.5B + 8x4.72Mx48 = 3.3B, which is what A3B names.",
+  "n_layers": 48,
+  "n_embd": 2048,
+  "n_vocab": 151936,
+  "params": 30532122624,
+  "attention": { "kind": "gqa", "n_kv_heads": 4, "head_dim": 128 },
+  "moe": { "n_expert": 128, "n_active": 8, "expert_params": 4718592, "shared_params": 1510000000 },
+  "quants": [
+    { "name": "Q4_K_M", "bytes": 19971519744, "family": "k_quant" },
+    { "name": "IQ3_XXS", "bytes": 13099418419, "family": "i_quant" }
+  ]
+}
