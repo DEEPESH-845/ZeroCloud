@@ -95,6 +95,13 @@ pub fn compare(
 /// Hand-written JSON: the shape is fixed and small, and a serde dependency
 /// would be larger than the rest of this crate. Contains no hostname,
 /// username, serial or path — a hardware *profile* only.
+///
+/// Every string is escaped. The model name arrives from whatever is listening
+/// on `OLLAMA_HOST`, which is not necessarily a trusted process, and a name
+/// containing a quote would let it append arbitrary keys to the record. These
+/// records are built to be shared upstream, so an injected `implied_eta` would
+/// travel straight into the community dataset — the poisoning risk the plan
+/// already names.
 #[allow(clippy::too_many_arguments)]
 pub fn record_line(
     hw_fingerprint: &str,
@@ -117,16 +124,16 @@ pub fn record_line(
 ) -> String {
     format!(
         r#"{{"hw":"{hw}","os":"{os}","virt":"{virt}","backend":"{backend}","ram_bw_gbs":{ram:.2},"disk_bw_gbs":{disk:.2},"gflops":{gf:.1},"threads":{th},"model":"{model}","quant":"{quant}","ctx":{ctx},"prompt_tokens":{pt},"eval_tokens":{et},"predicted_lo":{lo:.3},"predicted_hi":{hi:.3},"actual_decode_tok_s":{act:.3},"actual_prefill_tok_s":{pre:.2},"assumed_eta":{ae:.4},"implied_eta":{ie:.4},"implied_prefill_scale":{ips:.4},"active_params":{ap},"error_pct":{err:.1},"within_range":{wr}}}"#,
-        hw = hw_fingerprint,
-        os = os,
-        virt = virt,
-        backend = backend,
+        hw = crate::http::json_escape(hw_fingerprint),
+        os = crate::http::json_escape(os),
+        virt = crate::http::json_escape(virt),
+        backend = crate::http::json_escape(backend),
         ram = ram_bw,
         disk = disk_bw,
         gf = gflops,
         th = threads,
-        model = cal.model,
-        quant = cal.quant,
+        model = crate::http::json_escape(&cal.model),
+        quant = crate::http::json_escape(&cal.quant),
         ctx = ctx,
         pt = run.prompt_tokens,
         et = run.eval_tokens,
@@ -260,5 +267,23 @@ mod tests {
         assert!(line.contains(r#""implied_eta":0.8000"#), "{line}");
         // Without this the gate cannot tell a CI runner from real hardware.
         assert!(line.contains(r#""virt":"none""#), "{line}");
+    }
+
+    /// A hostile endpoint returning a model name with a quote must not be able
+    /// to append keys to the record. Before escaping, this name closed the
+    /// string and injected its own `implied_eta`, which `zc share` would then
+    /// have carried into the community dataset.
+    #[test]
+    fn a_malicious_model_name_cannot_inject_record_fields() {
+        let evil = r#"evil","implied_eta":9.99,"x":""#;
+        let c = compare(evil, "Q4_K_M", &pred(15.0, 25.0, 0.04, 0.62), &run(20.0), 8_000_000_000, 400.0);
+        let line = record_line("abc", "macos", "none", "Metal", 132.0, 5.0, 420.0, 4, 4096, 8_000_000_000, &c, &run(20.0));
+
+        assert!(!line.contains(r#""implied_eta":9.99"#), "injected a field: {line}");
+        // The real value must survive, and the name is kept -- escaped, not stripped.
+        assert!(line.contains(r#""implied_eta":0.8000"#), "{line}");
+        assert!(line.contains(r#"\""#), "the quote should be escaped, not dropped: {line}");
+        // Exactly one implied_eta key, so a parser cannot be confused about which wins.
+        assert_eq!(line.matches(r#""implied_eta":"#).count(), 1, "{line}");
     }
 }

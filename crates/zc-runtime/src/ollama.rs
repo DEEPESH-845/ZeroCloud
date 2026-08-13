@@ -53,6 +53,24 @@ pub fn parse_host(raw: &str) -> Option<Endpoint> {
     if raw.is_empty() {
         return None;
     }
+    // `[::1]:11434` — the bracketed form is the only unambiguous way to write
+    // an IPv6 address with a port. Strip the brackets: the resolver wants the
+    // bare address, and `[::1]` matches neither an IP literal nor a DNS name.
+    if let Some(rest) = raw.strip_prefix('[') {
+        let (h, tail) = rest.split_once(']')?;
+        return Some(Endpoint {
+            host: h.into(),
+            port: match tail.strip_prefix(':') {
+                Some(p) => p.parse().ok()?,
+                None => 11434,
+            },
+        });
+    }
+    // A bare IPv6 address has several colons and no port; splitting on the last
+    // one turned `::1` into host ":" port 1.
+    if raw.matches(':').count() > 1 {
+        return Some(Endpoint { host: raw.into(), port: 11434 });
+    }
     Some(match raw.rsplit_once(':') {
         Some((h, p)) => Endpoint {
             host: if h.is_empty() { "127.0.0.1".into() } else { h.into() },
@@ -337,6 +355,29 @@ mod tests {
         let e = parse_host(":11500").unwrap();
         assert_eq!((e.host.as_str(), e.port), ("127.0.0.1", 11500));
         assert!(parse_host("").is_none());
+
+        // The commonest spelling of all, and the one that used to fail.
+        let e = parse_host("localhost:11434").unwrap();
+        assert_eq!((e.host.as_str(), e.port), ("localhost", 11434));
+    }
+
+    /// Splitting on the last colon mangles IPv6: `[::1]:11434` kept its
+    /// brackets (which resolve to nothing) and bare `::1` became host ":"
+    /// on port 1.
+    #[test]
+    fn parses_ipv6_hosts() {
+        let e = parse_host("[::1]:11434").unwrap();
+        assert_eq!((e.host.as_str(), e.port), ("::1", 11434));
+
+        let e = parse_host("[::1]").unwrap();
+        assert_eq!((e.host.as_str(), e.port), ("::1", 11434));
+
+        let e = parse_host("http://[fe80::1]:9999").unwrap();
+        assert_eq!((e.host.as_str(), e.port), ("fe80::1", 9999));
+
+        // Unbracketed: ambiguous, so the whole value is the host.
+        let e = parse_host("::1").unwrap();
+        assert_eq!((e.host.as_str(), e.port), ("::1", 11434));
     }
 
     #[test]
