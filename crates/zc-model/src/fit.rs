@@ -29,8 +29,19 @@ use std::collections::HashMap;
 pub struct Record {
     pub hw: String,
     pub backend: String,
+    pub model: String,
+    pub quant: String,
     pub quant_family: QuantFamily,
     pub implied_eta: f64,
+    /// Signed error of the published range midpoint at the moment the
+    /// prediction was made. Absent in older records.
+    ///
+    /// This is the Phase 0 gate statistic, and it is only meaningful because it
+    /// was recorded *before* the run joined the dataset — see [`crate::gate`].
+    pub error_pct: Option<f64>,
+    /// Whether the measurement landed inside the range we published. The
+    /// promise actually made to the user, as opposed to the midpoint error.
+    pub within_range: Option<bool>,
     /// Measured prefill throughput expressed against the machine's own
     /// measured f32 FMA peak. Absent in older records.
     ///
@@ -100,7 +111,7 @@ pub struct Coefficient {
 
 /// Median of a slice. Takes `&mut` because it sorts in place rather than
 /// allocating a copy.
-fn median(v: &mut [f64]) -> f64 {
+pub(crate) fn median(v: &mut [f64]) -> f64 {
     if v.is_empty() {
         return 0.0;
     }
@@ -124,12 +135,17 @@ fn mad(v: &[f64], centre: f64) -> f64 {
 }
 
 pub fn parse_record(line: &str) -> Option<Record> {
+    let quant = json::string(line, "quant")?;
     Some(Record {
         hw: json::string(line, "hw")?,
         backend: json::string(line, "backend")?,
+        model: json::string(line, "model").unwrap_or_default(),
         // Records store the GGUF label; the family is what we group by.
-        quant_family: QuantFamily::from_gguf_label(&json::string(line, "quant")?),
+        quant_family: QuantFamily::from_gguf_label(&quant),
+        quant,
         implied_eta: json::number(line, "implied_eta")?,
+        error_pct: json::number(line, "error_pct").filter(|v| v.is_finite()),
+        within_range: json::boolean(line, "within_range"),
         implied_prefill_scale: json::number(line, "implied_prefill_scale")
             .filter(|v| v.is_finite() && *v > 0.0),
     })
@@ -344,8 +360,12 @@ mod tests {
         Record {
             hw: "abc".into(),
             backend: backend.into(),
+            model: "m".into(),
+            quant: quant.into(),
             quant_family: QuantFamily::from_gguf_label(quant),
             implied_eta: eta,
+            error_pct: None,
+            within_range: None,
             implied_prefill_scale: None,
         }
     }
@@ -507,6 +527,13 @@ mod tests {
         assert_eq!(rs[0].quant_family, QuantFamily::KQuant);
         assert_eq!(rs[1].quant_family, QuantFamily::IQuant);
         assert!((rs[0].implied_eta - 0.83).abs() < 1e-9);
+
+        // The gate reads these two straight off the record; losing them to a
+        // parser change would make the Phase 0 metric silently uncomputable.
+        assert_eq!(rs[0].error_pct, Some(-26.0));
+        assert_eq!(rs[0].within_range, Some(false));
+        assert_eq!(rs[1].within_range, Some(true));
+        assert_eq!(rs[0].model, "qwen3:4b");
 
         // Distinct families must not be pooled: that is the whole hypothesis
         // this dataset exists to test.
