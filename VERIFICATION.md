@@ -467,3 +467,101 @@ Blocking work, in order:
 5. Compute the median error and pass or fail the gate honestly.
 
 Items 1–3 are the ones that need code or a package install. Items 4–5 need hardware.
+
+---
+
+# Phase 0 — Closing the Gate
+
+This section supersedes the two earlier "next" lists. It is the campaign that
+either passes Phase 0 or kills the product.
+
+## `zc gate` — the instrument for item 5
+
+Item 5 ("compute the median error and pass or fail the gate honestly") had no
+implementation. `error_pct` and `within_range` were written into every record by
+`zc verify` and then discarded by `parse_record` — the gate metric was
+unreachable from any code path, so "median error < 25%" was an opinion.
+
+`zc gate` computes it, and **exits non-zero until it passes**, so it can gate CI
+and cannot be quietly ignored.
+
+Three choices in it are load-bearing:
+
+**The error is read from the record, never recomputed.** Each `error_pct` was
+produced by a prediction made *before* that run joined the dataset, so it is
+genuinely out-of-sample — prequential validation, for free, as a side effect of
+how the loop already works. Recomputing error against the finished fit would
+grade the model on its own training data and would flatter it hardest at exactly
+the moment the answer matters most.
+
+**The gate statistic is the median of per-machine medians.** Forty runs on this
+laptop must not outvote four runs on the four machines the gate exists to test.
+The pooled median is printed beside it, and a gap over 10 points is called out:
+that gap *is* a finding, because uneven per-machine accuracy is the failure mode
+of spec-lookup products and the one thing this design claims to avoid.
+
+Demonstrated on a synthetic uneven dataset — 12 well-predicted runs on one
+machine, 2 badly-predicted runs on each of four others:
+
+```
+median of per-machine medians       45.5%   <- the gate
+pooled median over all runs          5.2%
+```
+
+Pooling calls that a comfortable pass. It is a failure. That difference is the
+entire reason the command exists.
+
+**Range membership is tracked separately.** The published range is the promise;
+the midpoint is a summary of it. A run outside the range is a broken promise even
+when the midpoint error looks tolerable.
+
+## The measurement campaign
+
+Ollama is not installed on the dev machine, so **zero of this has run**.
+
+### Order of operations, per machine
+
+1. Machine idle, on mains power, not thermally soaked from a previous run. The
+   benchmark measures the machine it is given; a throttled one measures a
+   throttled machine, and the fit's median is robust to a few of those but not
+   to a campaign of them.
+2. `zc check` first — record the predictions *before* measuring. Predictions made
+   after are no longer out-of-sample and the gate's honesty depends on this.
+3. `zc verify <model>` per model, smallest first.
+4. `zc gate` and `zc fit` after each machine.
+
+### Coverage requirement, and the trap in it
+
+The gate needs ≥3 models × ≥2 quant families. **Ollama's default library tags are
+almost all `Q4_K_M`** — a naive campaign pulls five models, measures the k-quant
+family five times, and produces a dataset that says nothing about the one
+hypothesis Week 1 raised:
+
+> K-quants nearer 0.85, I-quants nearer 0.50 — a hypothesis to test, not a
+> finding, and the constants must not be tuned before the measurement.
+
+An i-quant has to be pulled explicitly (a `hf.co/<repo>:<quant>` tag). Confirm
+the tag resolves before committing to a pull; a mistyped tag that silently falls
+back to the default quant would put a k-quant measurement in the i-quant bucket
+and corrupt precisely the comparison the campaign exists to make.
+
+On a 16 GiB machine, a 70B model does not fit and should not be pulled for
+calibration. It is worth one deliberate run later as a test of the *streaming*
+path, which currently predicts 0.1 tok/s and has never been observed.
+
+### What the first run will most likely show
+
+The Week 1 prediction on record is that dense k-quant decode is ~30% low. If the
+first `zc verify` reproduces that, it is evidence for the family-spread
+hypothesis. If the first run instead lands inside the range, that is a stronger
+result and a duller one. **Either way the constants stay untouched — the fit is
+allowed to move them, hands are not.**
+
+## Deliberately not done yet
+
+`firmware_reserved` off macOS (blocking item 3) is real and matters most on the
+8 GiB Windows machines this product exists for. It is not being written now,
+because it cannot be executed or validated on this machine, and shipping a second
+unvalidated cross-platform path while the first one is still unvalidated is how
+the Windows compile break in bug 15 survived for days. It goes in on the machine
+that can run it.

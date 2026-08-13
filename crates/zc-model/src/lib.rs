@@ -12,12 +12,14 @@
 
 pub mod catalog;
 pub mod fit;
+pub mod gate;
 pub mod json;
 pub mod kv;
 pub mod predict;
 pub mod spec;
 
 pub use fit::{Confidence, Fit};
+pub use gate::Gate;
 pub use kv::*;
 pub use predict::*;
 pub use spec::*;

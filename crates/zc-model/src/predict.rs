@@ -491,8 +491,12 @@ mod tests {
             .map(|_| Record {
                 hw: "x".into(),
                 backend: "Metal".into(),
+                model: "m".into(),
+                quant: "Q4_K_M".into(),
                 quant_family: crate::spec::QuantFamily::KQuant,
                 implied_eta: 0.85,
+                error_pct: None,
+                within_range: None,
                 implied_prefill_scale: None,
             })
             .collect();
