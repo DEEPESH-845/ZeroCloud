@@ -1,0 +1,15 @@
+[package]
+name = "zc-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "zc"
+path = "src/main.rs"
+
+[dependencies]
+zc-probe = { path = "../zc-probe" }
+zc-bench = { path = "../zc-bench" }
+zc-model = { path = "../zc-model" }
+zc-runtime = { path = "../zc-runtime" }
