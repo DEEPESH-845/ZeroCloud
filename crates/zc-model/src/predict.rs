@@ -493,6 +493,7 @@ mod tests {
                 backend: "Metal".into(),
                 model: "m".into(),
                 quant: "Q4_K_M".into(),
+                virt: Some("none".into()),
                 quant_family: crate::spec::QuantFamily::KQuant,
                 implied_eta: 0.85,
                 error_pct: None,
