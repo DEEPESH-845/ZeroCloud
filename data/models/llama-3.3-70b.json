@@ -1,0 +1,15 @@
+{
+  "id": "llama-3.3-70b",
+  "arch": "llama",
+  "source": "hf:meta-llama/Llama-3.3-70B-Instruct",
+  "verified": "2026-08-13",
+  "n_layers": 80,
+  "n_embd": 8192,
+  "n_vocab": 128256,
+  "params": 70553706496,
+  "attention": { "kind": "gqa", "n_kv_heads": 8, "head_dim": 128 },
+  "quants": [
+    { "name": "Q4_K_M", "bytes": 45635198976, "family": "k_quant" },
+    { "name": "IQ2_XXS", "bytes": 20508224717, "family": "i_quant" }
+  ]
+}

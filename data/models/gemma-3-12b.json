@@ -1,0 +1,15 @@
+{
+  "id": "gemma-3-12b",
+  "arch": "gemma3",
+  "source": "hf:google/gemma-3-12b-it",
+  "verified": "2026-08-13",
+  "note": "Sliding window 1024 with a 5:1 local-to-global layer ratio, so 40 of 48 layers stop growing once the window fills.",
+  "n_layers": 48,
+  "n_embd": 3840,
+  "n_vocab": 262144,
+  "params": 12187325440,
+  "attention": { "kind": "swa", "n_kv_heads": 8, "head_dim": 256, "window": 1024, "global_every": 6 },
+  "quants": [
+    { "name": "Q4_K_M", "bytes": 7838315315, "family": "k_quant" }
+  ]
+}
