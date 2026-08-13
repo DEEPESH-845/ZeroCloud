@@ -1,0 +1,197 @@
+# Cross-platform calibration.
+#
+# This exists because three things were blocking Phase 0 at once, and one
+# workflow clears all of them:
+#
+#   1. The Linux and Windows code paths had never been *executed*. `check.sh`
+#      cross-compiles them, which proves they build and nothing more. The
+#      `MemAvailable` parse, the `GetLogicalProcessorInformationEx` walk marked
+#      UNVALIDATED in the source, and `FILE_FLAG_NO_BUFFERING` are all still
+#      unproven until something runs them on the real OS.
+#   2. The gate needs measurements from more than one machine.
+#   3. Every tok/s figure was a prior until real inference was measured.
+#
+# Runners are virtual machines, and `zc verify` records that (`"virt"`), so the
+# gate can count them as machines while still refusing to pass on cloud
+# hardware alone. See MIN_BARE_METAL in zc-model/src/gate.rs.
+
+name: calibrate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: "Ollama model to calibrate against"
+        default: "llama3.2:1b"
+        type: string
+
+concurrency:
+  group: calibrate-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Small on purpose: CI is here for machine diversity and to execute the
+  # per-OS code paths, not to benchmark a large model. Overridable via
+  # workflow_dispatch.
+  ZC_MODEL: ${{ inputs.model || 'llama3.2:1b' }}
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Fast gate on correctness. Runs natively on each OS, which is strictly
+  # stronger than the cross-target `cargo check` in check.sh.
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: test
+        run: cargo test --workspace
+      - name: clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+  calibrate:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    # Git Bash on the Windows runner, so one script covers all three platforms.
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      # Release build is mandatory, not a preference. A debug build's FMA loop
+      # reports a fraction of real throughput, and every derived coefficient
+      # would inherit that error.
+      - name: build release
+        run: cargo build --release
+
+      - name: install ollama (linux)
+        if: runner.os == 'Linux'
+        run: curl -fsSL https://ollama.com/install.sh | sh
+
+      - name: install ollama (macos)
+        if: runner.os == 'macOS'
+        run: brew install ollama
+
+      # The standalone zip avoids the interactive installer and needs no admin.
+      - name: install ollama (windows)
+        if: runner.os == 'Windows'
+        run: |
+          curl -fsSL -o ollama.zip https://github.com/ollama/ollama/releases/latest/download/ollama-windows-amd64.zip
+          unzip -q ollama.zip -d "$HOME/ollama"
+          echo "$HOME/ollama" >> "$GITHUB_PATH"
+
+      - name: start ollama
+        run: |
+          ollama serve > "$RUNNER_TEMP/ollama.log" 2>&1 &
+          # Poll rather than sleep a fixed amount: startup time varies by
+          # platform and a fixed sleep is either flaky or wasteful.
+          for i in $(seq 1 60); do
+            if curl -fsS --max-time 2 http://127.0.0.1:11434/api/version; then
+              echo "ready after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::ollama did not become ready in 60s"
+          cat "$RUNNER_TEMP/ollama.log"
+          exit 1
+
+      - name: pull model
+        run: ollama pull "$ZC_MODEL"
+
+      # Predictions must be recorded before the model is measured, or the
+      # error in the calibration record is no longer out-of-sample and the
+      # gate's central honesty property is lost.
+      - name: zc check
+        run: ./target/release/zc check | tee "$RUNNER_TEMP/check.txt"
+
+      - name: zc verify
+        run: ./target/release/zc verify "$ZC_MODEL"
+
+      - name: summary
+        if: always()
+        run: |
+          {
+            echo "## ${{ matrix.os }}"
+            echo '```'
+            cat "$RUNNER_TEMP/check.txt" 2>/dev/null || echo "check did not run"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # The point of the whole job: one machine's worth of calibration data.
+      - name: upload calibration record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: calibration-${{ matrix.os }}
+          path: data/calibration/local.jsonl
+          if-no-files-found: warn
+
+  # Merges every runner's record into one dataset, which is what turns three
+  # separate jobs into three machines the gate can actually count.
+  gate:
+    needs: calibrate
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: calibration-*
+          path: collected
+
+      - name: merge records
+        run: |
+          mkdir -p merged
+          find collected -name "local.jsonl" -exec cat {} + > merged/all.jsonl || true
+          echo "$(wc -l < merged/all.jsonl) record(s) collected"
+
+      # Deliberately does not fail the build. `zc gate` exits non-zero until
+      # Phase 0 passes, which is correct for a release check and wrong for
+      # every push -- permanently red CI is CI nobody reads. The status is
+      # reported in the job summary instead.
+      - name: zc gate
+        continue-on-error: true
+        env:
+          ZC_CALIBRATION: merged/all.jsonl
+        run: |
+          {
+            echo "## Phase 0 gate"
+            echo '```'
+            ./target/release/zc gate 2>&1 || true
+            echo '```'
+            echo "_CI runners are VMs. The gate counts them as machines but"
+            echo "requires bare-metal ones too, so this cannot go green on"
+            echo "cloud hardware alone._"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: upload merged dataset
+        uses: actions/upload-artifact@v4
+        with:
+          name: calibration-merged
+          path: merged/all.jsonl
+          if-no-files-found: warn
