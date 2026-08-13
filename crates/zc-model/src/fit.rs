@@ -31,6 +31,10 @@ pub struct Record {
     pub backend: String,
     pub model: String,
     pub quant: String,
+    /// `none` on bare metal; `wsl2`, `container` or `hypervisor` otherwise.
+    /// Older records predate the field and read as `None`, which the gate
+    /// treats as unknown rather than assuming bare metal.
+    pub virt: Option<String>,
     pub quant_family: QuantFamily,
     pub implied_eta: f64,
     /// Signed error of the published range midpoint at the moment the
@@ -140,6 +144,7 @@ pub fn parse_record(line: &str) -> Option<Record> {
         hw: json::string(line, "hw")?,
         backend: json::string(line, "backend")?,
         model: json::string(line, "model").unwrap_or_default(),
+        virt: json::string(line, "virt"),
         // Records store the GGUF label; the family is what we group by.
         quant_family: QuantFamily::from_gguf_label(&quant),
         quant,
@@ -362,6 +367,7 @@ mod tests {
             backend: backend.into(),
             model: "m".into(),
             quant: quant.into(),
+            virt: Some("none".into()),
             quant_family: QuantFamily::from_gguf_label(quant),
             implied_eta: eta,
             error_pct: None,

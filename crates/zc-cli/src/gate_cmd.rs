@@ -44,9 +44,15 @@ pub fn run() -> i32 {
         return FAILED;
     }
 
-    println!("\n  {:<20} {:>7} {:>18}", "machine", "runs", "median |error|");
+    println!("\n  {:<20} {:>7} {:>18}  kind", "machine", "runs", "median |error|");
     for m in &g.machines {
-        println!("  {:<20} {:>7} {:>17.1}%", m.hw, m.runs, m.median_abs_error_pct);
+        println!(
+            "  {:<20} {:>7} {:>17.1}%  {}",
+            m.hw,
+            m.runs,
+            m.median_abs_error_pct,
+            if m.virtualized { "vm" } else { "bare metal" }
+        );
     }
 
     println!("\n  median of per-machine medians   {:>8.1}%   <- the gate", g.median_pct);
