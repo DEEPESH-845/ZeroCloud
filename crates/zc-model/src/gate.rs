@@ -22,12 +22,19 @@ use std::collections::HashMap;
 
 pub const MAX_MEDIAN_ERROR_PCT: f64 = 25.0;
 pub const MIN_MACHINES: usize = 5;
+/// How many of those five must be real hardware rather than cloud runners.
+pub const MIN_BARE_METAL: usize = 2;
 
 #[derive(Debug, Clone)]
 pub struct MachineResult {
     pub hw: String,
     pub runs: usize,
     pub median_abs_error_pct: f64,
+    /// False when every record from this machine says `virt":"none"`. A CI
+    /// runner is a real machine with real bandwidth, so it counts toward the
+    /// gate — but `env.rs` warns that hypervisors run 10-30% below bare metal,
+    /// and a gate passed entirely in the cloud would not have tested that.
+    pub virtualized: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -37,6 +44,9 @@ pub struct Gate {
     pub runs: usize,
     pub skipped: usize,
     pub machines: Vec<MachineResult>,
+    /// Machines that reported no hypervisor. Cloud runners are useful and count
+    /// toward the machine total, but cannot supply all of it.
+    pub bare_metal: usize,
     /// Median |error| over every run pooled together.
     pub pooled_median_pct: f64,
     /// Median of each machine's own median. This is the gate.
@@ -61,16 +71,22 @@ impl Gate {
             return Gate { skipped, ..Default::default() };
         }
 
-        let mut by_hw: HashMap<&str, Vec<f64>> = HashMap::new();
+        let mut by_hw: HashMap<&str, (Vec<f64>, bool)> = HashMap::new();
         for (r, e) in &scored {
-            by_hw.entry(r.hw.as_str()).or_default().push(e.abs());
+            let slot = by_hw.entry(r.hw.as_str()).or_insert_with(|| (Vec::new(), false));
+            slot.0.push(e.abs());
+            // Unknown (an older record with no field) is not treated as bare
+            // metal: claiming hardware we cannot prove is the wrong direction
+            // to be wrong in.
+            slot.1 |= r.virt.as_deref() != Some("none");
         }
         let mut machines: Vec<MachineResult> = by_hw
             .into_iter()
-            .map(|(hw, mut errs)| MachineResult {
+            .map(|(hw, (mut errs, virtualized))| MachineResult {
                 hw: hw.to_string(),
                 runs: errs.len(),
                 median_abs_error_pct: median(&mut errs),
+                virtualized,
             })
             .collect();
         machines.sort_by(|a, b| b.runs.cmp(&a.runs).then(a.hw.cmp(&b.hw)));
@@ -97,10 +113,18 @@ impl Gate {
         worst.sort_by(|a, b| b.2.abs().partial_cmp(&a.2.abs()).unwrap_or(std::cmp::Ordering::Equal));
         worst.truncate(5);
 
+        let bare_metal = machines.iter().filter(|m| !m.virtualized).count();
         Gate {
             runs: scored.len(),
             skipped,
-            passed: machines.len() >= MIN_MACHINES && median_pct < MAX_MEDIAN_ERROR_PCT,
+            // Bare metal is required, not merely preferred. Cloud runners are
+            // cheap enough to reach five machines in an afternoon, and a gate
+            // that could be passed without ever touching real hardware would
+            // measure the CI fleet rather than the product's target market.
+            passed: machines.len() >= MIN_MACHINES
+                && bare_metal >= MIN_BARE_METAL
+                && median_pct < MAX_MEDIAN_ERROR_PCT,
+            bare_metal,
             machines,
             pooled_median_pct,
             median_pct,
@@ -121,6 +145,13 @@ impl Gate {
             out.push(format!(
                 "{n} of {MIN_MACHINES} machines - need {} more distinct machine(s)",
                 MIN_MACHINES - n
+            ));
+        }
+        if self.bare_metal < MIN_BARE_METAL {
+            out.push(format!(
+                "{} of {MIN_BARE_METAL} bare-metal machines - hypervisors run 10-30% \
+                 below real hardware, so cloud runners alone cannot pass this",
+                self.bare_metal
             ));
         }
         if self.median_pct >= MAX_MEDIAN_ERROR_PCT {
@@ -144,6 +175,7 @@ mod tests {
             backend: "Metal".into(),
             model: "qwen3:4b".into(),
             quant: "Q4_K_M".into(),
+            virt: Some("none".into()),
             quant_family: QuantFamily::KQuant,
             implied_eta: 0.8,
             error_pct: Some(err),
@@ -225,6 +257,60 @@ mod tests {
         assert_eq!(g.skipped, 1);
         assert_eq!(g.machines.len(), 5, "the unscored machine must not count toward the 5");
         assert!(!g.passed);
+    }
+
+    fn vm(hw: &str, err: f64) -> Record {
+        Record { virt: Some("hypervisor".into()), ..rec(hw, err, true) }
+    }
+
+    /// The whole point of marking CI records. Five cloud runners agreeing with
+    /// each other is not evidence about the laptops this product is for, and a
+    /// gate that green-lit on them would measure the CI fleet.
+    #[test]
+    fn cloud_runners_alone_cannot_pass_the_gate() {
+        let rs: Vec<Record> = (0..5).map(|i| vm(&format!("ci{i}"), 3.0)).collect();
+        let g = Gate::from_records(&rs);
+
+        assert_eq!(g.machines.len(), 5);
+        assert_eq!(g.bare_metal, 0);
+        assert!(g.median_pct < MAX_MEDIAN_ERROR_PCT, "accuracy is fine");
+        assert!(!g.passed, "five VMs must not pass");
+        assert!(g.blockers().iter().any(|b| b.contains("bare-metal")), "{:?}", g.blockers());
+    }
+
+    /// Cloud runners still count toward the machine total — they are real
+    /// hardware with real bandwidth, just not the whole story.
+    #[test]
+    fn cloud_runners_count_alongside_bare_metal() {
+        let mut rs: Vec<Record> = (0..3).map(|i| vm(&format!("ci{i}"), 8.0)).collect();
+        rs.extend((0..2).map(|i| rec(&format!("real{i}"), 8.0, true)));
+
+        let g = Gate::from_records(&rs);
+        assert_eq!(g.machines.len(), 5);
+        assert_eq!(g.bare_metal, 2);
+        assert!(g.passed, "{:?}", g.blockers());
+    }
+
+    /// A record predating the field must not be counted as proven bare metal.
+    #[test]
+    fn unknown_virt_is_not_assumed_bare_metal() {
+        let rs: Vec<Record> = (0..5)
+            .map(|i| Record { virt: None, ..rec(&format!("old{i}"), 3.0, true) })
+            .collect();
+        let g = Gate::from_records(&rs);
+        assert_eq!(g.bare_metal, 0);
+        assert!(!g.passed);
+    }
+
+    /// One virtualized run taints the machine: the same fingerprint measured
+    /// both ways means we cannot claim a clean bare-metal reading from it.
+    #[test]
+    fn a_machine_is_virtualized_if_any_of_its_runs_were() {
+        let rs = vec![rec("mixed", 5.0, true), vm("mixed", 5.0)];
+        let g = Gate::from_records(&rs);
+        assert_eq!(g.machines.len(), 1);
+        assert!(g.machines[0].virtualized);
+        assert_eq!(g.bare_metal, 0);
     }
 
     #[test]

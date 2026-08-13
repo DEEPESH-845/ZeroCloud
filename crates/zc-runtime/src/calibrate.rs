@@ -99,6 +99,12 @@ pub fn compare(
 pub fn record_line(
     hw_fingerprint: &str,
     os: &str,
+    // `none`, `wsl2`, `container` or `hypervisor`. A fixed vocabulary rather
+    // than the raw vendor string: it needs no JSON escaping, and the gate only
+    // ever asks whether this was bare metal. CI runners are virtual machines,
+    // so without this every cloud-collected record would be indistinguishable
+    // from one measured on real hardware.
+    virt: &str,
     backend: &str,
     ram_bw: f64,
     disk_bw: f64,
@@ -110,9 +116,10 @@ pub fn record_line(
     run: &RunStats,
 ) -> String {
     format!(
-        r#"{{"hw":"{hw}","os":"{os}","backend":"{backend}","ram_bw_gbs":{ram:.2},"disk_bw_gbs":{disk:.2},"gflops":{gf:.1},"threads":{th},"model":"{model}","quant":"{quant}","ctx":{ctx},"prompt_tokens":{pt},"eval_tokens":{et},"predicted_lo":{lo:.3},"predicted_hi":{hi:.3},"actual_decode_tok_s":{act:.3},"actual_prefill_tok_s":{pre:.2},"assumed_eta":{ae:.4},"implied_eta":{ie:.4},"implied_prefill_scale":{ips:.4},"active_params":{ap},"error_pct":{err:.1},"within_range":{wr}}}"#,
+        r#"{{"hw":"{hw}","os":"{os}","virt":"{virt}","backend":"{backend}","ram_bw_gbs":{ram:.2},"disk_bw_gbs":{disk:.2},"gflops":{gf:.1},"threads":{th},"model":"{model}","quant":"{quant}","ctx":{ctx},"prompt_tokens":{pt},"eval_tokens":{et},"predicted_lo":{lo:.3},"predicted_hi":{hi:.3},"actual_decode_tok_s":{act:.3},"actual_prefill_tok_s":{pre:.2},"assumed_eta":{ae:.4},"implied_eta":{ie:.4},"implied_prefill_scale":{ips:.4},"active_params":{ap},"error_pct":{err:.1},"within_range":{wr}}}"#,
         hw = hw_fingerprint,
         os = os,
+        virt = virt,
         backend = backend,
         ram = ram_bw,
         disk = disk_bw,
@@ -247,9 +254,11 @@ mod tests {
     #[test]
     fn record_is_single_line_json() {
         let c = compare("qwen3:4b", "Q4_K_M", &pred(15.0, 25.0, 0.04, 0.62), &run(20.0), 8_000_000_000, 400.0);
-        let line = record_line("abc", "macos", "Metal", 132.0, 5.0, 420.0, 4, 4096, 8_000_000_000, &c, &run(20.0));
+        let line = record_line("abc", "macos", "none", "Metal", 132.0, 5.0, 420.0, 4, 4096, 8_000_000_000, &c, &run(20.0));
         assert!(!line.contains('\n'));
         assert!(line.starts_with('{') && line.ends_with('}'));
         assert!(line.contains(r#""implied_eta":0.8000"#), "{line}");
+        // Without this the gate cannot tell a CI runner from real hardware.
+        assert!(line.contains(r#""virt":"none""#), "{line}");
     }
 }
