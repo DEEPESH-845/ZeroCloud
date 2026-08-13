@@ -156,7 +156,7 @@ fn calibration_inverts_a_measured_run() {
     assert!((cal.implied_eta - 0.7018).abs() < 1e-3, "{}", cal.implied_eta);
 
     let line = zc_runtime::calibrate::record_line(
-        "deadbeef", "macos", "Metal", 132.0, 5.0, 420.0, 4, 4096, 4_022_468_096, &cal, &run,
+        "deadbeef", "macos", "none", "Metal", 132.0, 5.0, 420.0, 4, 4096, 4_022_468_096, &cal, &run,
     );
     assert!(!line.contains('\n'));
     assert!(line.contains(r#""actual_decode_tok_s":56.140"#), "{line}");
