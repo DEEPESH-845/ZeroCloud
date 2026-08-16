@@ -11,6 +11,28 @@
 //! same name at different depths resolve to whichever comes first. Swap in a
 //! real parser if we ever consume an API where that ambiguity is possible.
 
+/// Escape a string for embedding in a JSON literal.
+///
+/// Control characters below 0x20 must be escaped or a strict parser rejects the
+/// document. This lives here rather than beside a single caller because every
+/// string we *write* — request bodies, calibration records, report output —
+/// needs it, and a record with one unescaped field is a corrupted dataset.
+pub fn escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 8);
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 /// Byte offset just past `"<key>":`, skipping matches inside string literals.
 fn find_key(src: &str, key: &str) -> Option<usize> {
     let b = src.as_bytes();

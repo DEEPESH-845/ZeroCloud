@@ -102,6 +102,7 @@ dependencies = [
  "zc-bench",
  "zc-model",
  "zc-probe",
+ "zc-report",
  "zc-runtime",
 ]
 
@@ -115,6 +116,15 @@ version = "0.1.0"
 dependencies = [
  "libc",
  "windows-sys",
+]
+
+[[package]]
+name = "zc-report"
+version = "0.1.0"
+dependencies = [
+ "zc-bench",
+ "zc-model",
+ "zc-probe",
 ]
 
 [[package]]

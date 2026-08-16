@@ -17,6 +17,23 @@ pub enum Virt {
     Hypervisor(String),
 }
 
+impl Env {
+    /// `none`, `wsl2`, `container` or `hypervisor`.
+    ///
+    /// A fixed vocabulary rather than the raw vendor string: it needs no JSON
+    /// escaping, and every consumer — the calibration record, the gate, the
+    /// report — only ever asks whether this was bare metal. Defined once here
+    /// so those three can never disagree about what counts as virtualised.
+    pub fn virt_tag(&self) -> &'static str {
+        match self.virt {
+            None => "none",
+            Some(Virt::Wsl2) => "wsl2",
+            Some(Virt::Container) => "container",
+            Some(Virt::Hypervisor(_)) => "hypervisor",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Env {
     pub os: &'static str,
