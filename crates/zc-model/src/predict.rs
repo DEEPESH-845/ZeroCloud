@@ -18,7 +18,8 @@ pub enum Backend {
     /// GPU-achievable bandwidth — both land near 85% of theoretical.
     Metal,
     /// Discrete GPU. Weights in VRAM run at VRAM bandwidth; the rest spills
-    /// to host RAM. Not yet modelled.
+    /// to host RAM, where the CPU runs those layers at host bandwidth — which
+    /// is what every runtime does on a partial offload.
     Discrete,
 }
 
@@ -44,6 +45,22 @@ pub struct Hardware {
     /// Bytes we may actually allocate.
     pub usable_bytes: u64,
     pub threads: u32,
+    /// Dedicated VRAM of the single card we would run on, in bytes. 0 when
+    /// there is no discrete GPU.
+    ///
+    /// One card, never the sum: splitting a model across cards is a different
+    /// execution model with its own interconnect cost, and pretending two 8 GB
+    /// cards are a 16 GB card predicts "fits" for something that does not.
+    pub vram_bytes: u64,
+    /// VRAM read bandwidth, GB/s.
+    pub vram_bw_gbs: f64,
+    /// Whether `vram_bw_gbs` was measured on this machine or looked up from a
+    /// table of card families.
+    ///
+    /// Load-bearing: everything else in `Hardware` is measured, and a looked-up
+    /// number must not be able to earn the same confidence as a measured one.
+    /// `predict_with` caps confidence when this is false.
+    pub vram_bw_measured: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -177,7 +194,11 @@ pub fn predict_with(
     let compute_buf = spec.compute_buffer_bytes(ubatch);
     let kv_floor = spec.kv_bytes(MIN_USABLE_CTX, kv_prec);
 
-    let after_bufs = hw.usable_bytes.saturating_sub(compute_buf);
+    // VRAM is capacity in exactly the same sense host RAM is: it holds weights
+    // and KV that would otherwise stream from disk. So it joins the pool the
+    // budget is drawn from, and only the *speed* of what lands there differs.
+    let pool = hw.usable_bytes.saturating_add(hw.vram_bytes);
+    let after_bufs = pool.saturating_sub(compute_buf);
     let weights_cached = quant.bytes.min(after_bufs.saturating_sub(kv_floor));
     let for_kv = after_bufs.saturating_sub(weights_cached);
     let max_context = spec.max_context_in(for_kv, kv_prec);
@@ -186,14 +207,14 @@ pub fn predict_with(
     // not the theoretical ceiling.
     let reserve_ctx = max_context.clamp(512, 4096);
 
-    // Residency, MoE-aware.
+    // Residency, MoE-aware and tiered.
     //
     // The hot core (embeddings, attention, routers, shared experts) is read on
-    // every token, so it is pinned first and is the most valuable thing in RAM.
-    // Whatever remains caches routed experts. Computing one blended fraction
-    // over *total* bytes and applying it to *active* bytes understates MoE
-    // badly, because the hot core is a small slice of the total but a large
-    // slice of the active set.
+    // every token, so it is pinned in the fastest tier first and is the most
+    // valuable thing in memory. Whatever remains caches routed experts.
+    // Computing one blended fraction over *total* bytes and applying it to
+    // *active* bytes understates MoE badly, because the hot core is a small
+    // slice of the total but a large slice of the active set.
     //
     // ponytail: assumes uniform expert access. Real routing is heavily skewed,
     // which makes a cache of a given size hit more often than this predicts —
@@ -202,37 +223,71 @@ pub fn predict_with(
     let total_bytes = quant.bytes as f64;
     let hot = spec.hot_core_bytes(quant) as f64;
     let cold_total = (total_bytes - hot).max(0.0);
-    let cache = weights_cached as f64;
-
-    let hot_resident = cache.min(hot);
-    let expert_cache = (cache - hot_resident).max(0.0);
-    let expert_hit = if cold_total > 0.0 {
-        (expert_cache / cold_total).clamp(0.0, 1.0)
-    } else {
-        1.0
-    };
-
     let active = spec.active_bytes(quant) as f64;
     let active_cold = (active - hot).max(0.0);
-    let from_ram = if hot > 0.0 {
-        hot * (hot_resident / hot) + active_cold * expert_hit
-    } else {
-        // Dense: every weight is active, so the cache fraction applies directly.
-        active * expert_hit
-    };
-    let from_disk = (active - from_ram).max(0.0);
+
+    // KV and the compute buffers are written every token, so on a discrete GPU
+    // they occupy VRAM before any weight does. Charged at the operating
+    // context, which is what a real session allocates — charging the *maximum*
+    // context would starve the card of weights on a machine with plenty of RAM.
+    let vram_overhead = (compute_buf + spec.kv_bytes(reserve_ctx, kv_prec)).min(hw.vram_bytes);
+    let vram_for_weights = (hw.vram_bytes - vram_overhead).min(weights_cached);
+
+    // Fastest tier first, which is what every runtime does. With no GPU the
+    // first tier is empty and this reduces exactly to the host-RAM-then-disk
+    // model it replaces.
+    let tiers = [
+        (vram_for_weights as f64, hw.vram_bw_gbs),
+        ((weights_cached - vram_for_weights) as f64, hw.ram_bw_gbs),
+    ];
+    let mut hot_left = hot;
+    let mut cold_left = cold_total;
+    let mut seconds_per_token = 0.0;
+    let mut from_fast = 0.0;
+    for (capacity, gbs) in tiers {
+        if capacity <= 0.0 || gbs <= 0.0 {
+            continue;
+        }
+        let pinned = capacity.min(hot_left);
+        hot_left -= pinned;
+        let cached = (capacity - pinned).min(cold_left);
+        cold_left -= cached;
+        // Active bytes this tier serves: all of the hot core it holds, plus the
+        // share of the cold set it caches.
+        let served = pinned
+            + if cold_total > 0.0 {
+                active_cold * (cached / cold_total)
+            } else {
+                0.0
+            };
+        seconds_per_token += served / (gbs * 1e9);
+        from_fast += served;
+    }
+    let from_disk = (active - from_fast).max(0.0);
+    seconds_per_token += from_disk / (hw.disk_gbs.max(0.01) * 1e9);
 
     // Reported as a fraction of *active* bytes — what is actually read per
     // token — rather than of the whole file.
-    let resident_fraction = if active > 0.0 { from_ram / active } else { 1.0 };
-
-    let bw_ram = hw.ram_bw_gbs * 1e9;
-    let bw_disk = hw.disk_gbs.max(0.01) * 1e9;
-    let seconds_per_token = from_ram / bw_ram + from_disk / bw_disk;
+    let resident_fraction = if active > 0.0 { from_fast / active } else { 1.0 };
 
     // Shipped prior, used only when no calibration record matches.
     let prior = DECODE_EFFICIENCY * quant.family.efficiency();
-    let coef = fit.lookup(&format!("{:?}", hw.backend), quant.family, prior);
+    let mut coef = fit.lookup(&format!("{:?}", hw.backend), quant.family, prior);
+
+    // A prediction is only as trustworthy as its slowest-moving input. When
+    // the weights sit in VRAM whose bandwidth we looked up in a table instead
+    // of measuring, the number underneath the range is not a measurement, and
+    // it must not be able to earn `high` however many runs back the
+    // coefficient — those runs came from other machines with other cards.
+    // Erring wide is the house rule: a confident wrong number is what kills a
+    // prediction tool.
+    if vram_for_weights > 0 && !hw.vram_bw_measured {
+        coef.confidence = match coef.confidence {
+            Confidence::High | Confidence::Medium => Confidence::Low,
+            other => other,
+        };
+        coef.spread = coef.spread.max(coef.confidence.min_spread());
+    }
     let eta = coef.eta;
     let decode = if seconds_per_token > 0.0 {
         eta / seconds_per_token
@@ -478,6 +533,9 @@ mod tests {
             gflops: 420.0,
             usable_bytes: 12 << 30,
             threads: 4,
+            vram_bytes: 0,
+            vram_bw_gbs: 0.0,
+            vram_bw_measured: false,
         };
 
         let before = predict(&spec, &quant, &hw, KvPrecision::Q8, 2048, 512);
@@ -525,6 +583,9 @@ mod tests {
             gflops: 420.0,
             usable_bytes: 12 << 30,
             threads: 4,
+            vram_bytes: 0,
+            vram_bw_gbs: 0.0,
+            vram_bw_measured: false,
         }
     }
 
@@ -628,6 +689,113 @@ mod tests {
         let p = predict(&spec, &quant, &hw, KvPrecision::Q8, 2048, 512);
         // ~5 GiB cacheable after buffers and the KV floor, out of 8 GiB.
         assert!((0.5..0.75).contains(&p.resident_fraction), "{}", p.resident_fraction);
+    }
+
+    fn hw_with_gpu(vram: u64, host: u64) -> Hardware {
+        Hardware {
+            backend: Backend::Discrete,
+            ram_bw_gbs: 50.0,
+            ram_bw_peak_gbs: 50.0,
+            disk_gbs: 1.0,
+            gflops: 420.0,
+            usable_bytes: host,
+            threads: 8,
+            vram_bytes: vram,
+            vram_bw_gbs: 360.0,
+            vram_bw_measured: false,
+        }
+    }
+
+    /// A model that fits entirely in VRAM must be read entirely at VRAM
+    /// bandwidth. Hand-computed: 4 GiB of active weights over 360 GB/s is
+    /// 4294967296 / 3.6e11 = 11.93 ms per token, and nothing else contributes.
+    ///
+    /// This is the whole point of the tier: before it existed, this machine was
+    /// predicted at 50 GB/s — an order of magnitude slow.
+    #[test]
+    fn weights_that_fit_in_vram_are_read_at_vram_bandwidth() {
+        let spec = llama3_8b();
+        let quant = q("Q4_K_M", 4 << 30, crate::spec::QuantFamily::KQuant);
+        let p = predict(
+            &spec,
+            &quant,
+            &hw_with_gpu(12 << 30, 8 << 30),
+            KvPrecision::Q8,
+            2048,
+            512,
+        );
+
+        assert_eq!(p.resident_fraction, 1.0);
+        let expected = (4u64 << 30) as f64 / 360e9;
+        assert!(
+            (p.raw_seconds_per_token - expected).abs() < 1e-12,
+            "{} vs {expected}",
+            p.raw_seconds_per_token
+        );
+    }
+
+    /// VRAM is capacity *and* speed, and the two must be modelled separately.
+    ///
+    /// Same total pool, once as 20 GiB of host RAM and once as 12 GiB of VRAM
+    /// plus 8 GiB of host RAM. Capacity being equal, the context available must
+    /// be identical; speed being tiered, the GPU machine must be faster — but
+    /// only partly, because 16 GiB of weights cannot all fit in 12 GiB of VRAM.
+    /// Predicting the full 7.2x speedup would be claiming the spill is free.
+    #[test]
+    fn a_partial_offload_lands_between_the_two_bandwidths() {
+        let spec = llama3_8b();
+        let quant = q("Q4_K_M", 16 << 30, crate::spec::QuantFamily::KQuant);
+        let cpu_only = Hardware {
+            backend: Backend::Cpu,
+            ..hw_with_gpu(0, 20 << 30)
+        };
+        let with_gpu = hw_with_gpu(12 << 30, 8 << 30);
+
+        let a = predict(&spec, &quant, &cpu_only, KvPrecision::Q8, 2048, 512);
+        let b = predict(&spec, &quant, &with_gpu, KvPrecision::Q8, 2048, 512);
+
+        assert_eq!(a.max_context, b.max_context, "same pool, same context");
+        let speedup = a.raw_seconds_per_token / b.raw_seconds_per_token;
+        assert!(speedup > 1.5, "GPU must help: {speedup}");
+        assert!(speedup < 360.0 / 50.0, "spill is not free: {speedup}");
+    }
+
+    /// Everything else in `Hardware` is measured on the machine. VRAM
+    /// bandwidth is a table lookup, so a prediction resting on it must not be
+    /// able to reach `high` no matter how many calibration runs back the
+    /// coefficient — those runs came from other machines with other cards.
+    #[test]
+    fn a_looked_up_vram_bandwidth_cannot_earn_high_confidence() {
+        use crate::fit::{Fit, Record};
+        let spec = llama3_8b();
+        let quant = q("Q4_K_M", 4 << 30, crate::spec::QuantFamily::KQuant);
+        let records: Vec<Record> = (0..40)
+            .map(|_| Record {
+                hw: "x".into(),
+                backend: "Discrete".into(),
+                model: "m".into(),
+                quant: "Q4_K_M".into(),
+                virt: Some("none".into()),
+                quant_family: crate::spec::QuantFamily::KQuant,
+                implied_eta: 0.85,
+                error_pct: None,
+                within_range: None,
+                implied_prefill_scale: None,
+            })
+            .collect();
+        let fit = Fit::from_records(&records);
+        let hw = hw_with_gpu(12 << 30, 8 << 30);
+
+        let p = predict_with(&spec, &quant, &hw, KvPrecision::Q8, 2048, 512, &fit);
+        assert_eq!(p.confidence, Confidence::Low);
+        let width = (p.decode_tok_s.1 - p.decode_tok_s.0) / (p.decode_tok_s.1 + p.decode_tok_s.0);
+        assert!(width >= 0.25, "range must stay wide: {width}");
+
+        // Measure the same bandwidth and the cap lifts — the cap is about
+        // provenance, not about GPUs.
+        let measured = Hardware { vram_bw_measured: true, ..hw };
+        let m = predict_with(&spec, &quant, &measured, KvPrecision::Q8, 2048, 512, &fit);
+        assert_eq!(m.confidence, Confidence::High);
     }
 
     /// max_context must be monotonic in budget, and zero when the weights do
