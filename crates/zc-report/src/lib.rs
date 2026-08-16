@@ -15,7 +15,7 @@ pub mod text;
 
 use zc_bench::{compute::ComputeResult, disk::DiskResult, ram::RamResult};
 use zc_model::{Backend, Prediction, Quant, Verdict};
-use zc_probe::{cpu::Cpu, env::Env, memory::Memory, storage::Storage};
+use zc_probe::{cpu::Cpu, env::Env, gpu::Gpu, memory::Memory, storage::Storage};
 
 /// One prediction, plus the identity of what was predicted.
 pub struct Row<'a> {
@@ -45,6 +45,7 @@ pub struct Report<'a> {
     pub mem: &'a Memory,
     pub env: &'a Env,
     pub storage: &'a Storage,
+    pub gpus: &'a [Gpu],
     pub ram: &'a RamResult,
     pub compute: &'a ComputeResult,
     /// `None` when the disk measurement failed. Never substituted with a
@@ -55,6 +56,10 @@ pub struct Report<'a> {
     /// Bandwidth figure actually used for prediction — the performance-core
     /// number on CPU, the all-core peak on unified memory.
     pub ram_bw_gbs: f64,
+    /// VRAM bandwidth of the card predictions run against, GB/s. 0 when there
+    /// is none. Always a table lookup today, which both renderers must say.
+    pub vram_bw_gbs: f64,
+    pub vram_bytes: u64,
     pub disk_gbs: f64,
     pub budget_idle: u64,
     pub budget_now: u64,
