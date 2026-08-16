@@ -5,6 +5,7 @@
 
 pub mod cpu;
 pub mod env;
+pub mod gpu;
 pub mod memory;
 pub mod storage;
 
