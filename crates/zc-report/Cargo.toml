@@ -1,0 +1,10 @@
+[package]
+name = "zc-report"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+zc-probe = { path = "../zc-probe" }
+zc-bench = { path = "../zc-bench" }
+zc-model = { path = "../zc-model" }
