@@ -6,7 +6,7 @@
 
 use crate::machine::Machine;
 use zc_model::{predict, KvPrecision};
-use zc_runtime::{calibrate, ollama};
+use zc_runtime::{calibrate, Runtime};
 
 /// Enough tokens for the rate to stabilise past the first-token transient,
 /// short enough that a slow machine finishes in about a minute.
@@ -17,28 +17,68 @@ const NUM_CTX: u32 = 4096;
 /// for the same prompt we are about to send.
 const PROMPT_TOKENS: u32 = 1200;
 
-/// Confirm a runtime is reachable *before* the caller spends 20 seconds
+/// Confirm a usable runtime is reachable *before* the caller spends 20 seconds
 /// benchmarking. Telling a user to install Ollama after making them wait is a
 /// small cruelty that costs nothing to avoid.
-pub fn precheck() -> Result<ollama::Endpoint, i32> {
-    let ep = ollama::Endpoint::from_env();
-    if ep.is_running() {
-        return Ok(ep);
+///
+/// "Usable" is narrower than "present": a runtime that cannot report its own
+/// prefill/decode split is listed here and then refused, because timing it from
+/// outside would fold HTTP and scheduling into `implied_eta` and corrupt the
+/// dataset permanently.
+pub fn precheck(wanted: Option<&str>) -> Result<Box<dyn Runtime>, i32> {
+    let found = zc_runtime::detect();
+
+    if let Some(name) = wanted {
+        return match found.into_iter().find(|r| r.name() == name) {
+            Some(rt) if rt.calibratable() => Ok(rt),
+            Some(rt) => {
+                eprintln!(
+                    "{} is running at {} but does not report its own prefill/decode\n\
+                     timings, so any measurement would include HTTP and scheduling\n\
+                     overhead. It cannot produce calibration data.",
+                    rt.name(),
+                    rt.endpoint()
+                );
+                Err(2)
+            }
+            None => {
+                eprintln!("No runtime named '{name}' is running.");
+                Err(2)
+            }
+        };
     }
-    eprintln!("No runtime found at {ep}.\n");
-    eprintln!("zc verify needs a real model to measure against. Install Ollama:");
-    eprintln!("    brew install ollama && ollama serve");
-    eprintln!("    ollama pull qwen3:4b");
+
+    for rt in &found {
+        if !rt.calibratable() {
+            println!(
+                "  note: {} at {} cannot report a prefill/decode split - skipping it",
+                rt.name(),
+                rt.endpoint()
+            );
+        }
+    }
+    if let Some(rt) = found.into_iter().find(|r| r.calibratable()) {
+        return Ok(rt);
+    }
+
+    eprintln!("No usable runtime found.\n");
+    eprintln!("zc verify needs a real model to measure against, from a runtime that");
+    eprintln!("reports its own timings. Any of these will do:");
+    eprintln!("    ollama serve                     (127.0.0.1:11434, OLLAMA_HOST)");
+    eprintln!("    llama-server -m model.gguf       (127.0.0.1:8080,  LLAMA_SERVER_HOST)");
+    eprintln!("    LM Studio, local server enabled  (127.0.0.1:1234,  LMSTUDIO_HOST)");
     eprintln!("\nThen run `zc verify` again.");
-    eprintln!("(Set OLLAMA_HOST if your runtime listens elsewhere.)");
     Err(2)
 }
 
-pub fn run(m: &Machine, ep: &ollama::Endpoint, fit: &zc_model::Fit, wanted: Option<&str>) -> i32 {
-    let models = match ep.list() {
+pub fn run(m: &Machine, rt: &dyn Runtime, fit: &zc_model::Fit, wanted: Option<&str>) -> i32 {
+    let models = match rt.list() {
         Ok(v) if !v.is_empty() => v,
         Ok(_) => {
-            eprintln!("Runtime is up but has no models. Try: ollama pull qwen3:4b");
+            eprintln!(
+                "{} is up but has no models loaded. Try: ollama pull qwen3:4b",
+                rt.name()
+            );
             return 2;
         }
         Err(e) => {
@@ -61,15 +101,35 @@ pub fn run(m: &Machine, ep: &ollama::Endpoint, fit: &zc_model::Fit, wanted: Opti
                 return 2;
             }
         },
-        None => models.last().expect("non-empty"),
+        // The smallest model is the fastest to measure and the most likely to
+        // fit, and a first run that takes ten minutes is a first run nobody
+        // finishes. Only Ollama reports sizes, so fall back to the first listed
+        // rather than depending on any runtime's list order.
+        None => models
+            .iter()
+            .filter(|m| m.size_bytes > 0)
+            .min_by_key(|m| m.size_bytes)
+            .unwrap_or_else(|| models.first().expect("non-empty")),
     };
 
-    let spec = match ep.describe(chosen) {
+    // Only Ollama describes a model itself. For the others the geometry comes
+    // from the catalog, joined on the name and verified against every fact the
+    // runtime did report — see `zc_runtime::catalog_match`.
+    let spec = match rt.describe(chosen) {
         Ok(Some(s)) => s,
-        Ok(None) => {
-            eprintln!("Runtime did not report usable metadata for {}.", chosen.name);
-            return 1;
-        }
+        Ok(None) => match zc_runtime::catalog_match(chosen) {
+            Some(s) => s,
+            None => {
+                eprintln!(
+                    "{} does not describe {} and it matches no catalog entry, so its\n\
+                     KV geometry is unknown. Guessing it would produce a confident\n\
+                     wrong prediction, which is worse than none.",
+                    rt.name(),
+                    chosen.name
+                );
+                return 1;
+            }
+        },
         Err(e) => {
             eprintln!("Could not describe {}: {e}", chosen.name);
             return 1;
@@ -78,7 +138,7 @@ pub fn run(m: &Machine, ep: &ollama::Endpoint, fit: &zc_model::Fit, wanted: Opti
     let quant = &spec.quants[0];
 
     println!("== verify ==");
-    println!("  runtime      {ep}");
+    println!("  runtime      {} at {}", rt.name(), rt.endpoint());
     println!(
         "  model        {}   {}   {:.2} GiB",
         chosen.name,
@@ -114,7 +174,7 @@ pub fn run(m: &Machine, ep: &ollama::Endpoint, fit: &zc_model::Fit, wanted: Opti
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(1, |d| d.as_nanos() as u64);
-    match ep.generate(&chosen.name, 8, NUM_CTX, nonce) {
+    match rt.generate(&chosen.name, 8, NUM_CTX, nonce) {
         Ok(w) => println!("loaded in {:.1}s", w.load_s),
         Err(e) => {
             println!("failed");
@@ -128,7 +188,7 @@ pub fn run(m: &Machine, ep: &ollama::Endpoint, fit: &zc_model::Fit, wanted: Opti
     // A different nonce: Ollama caches KV for repeated prompt prefixes, and a
     // cached prefix would report near-zero prefill time and silently corrupt
     // the calibration.
-    let run = match ep.generate(&chosen.name, NUM_PREDICT, NUM_CTX, nonce.wrapping_add(1)) {
+    let run = match rt.generate(&chosen.name, NUM_PREDICT, NUM_CTX, nonce.wrapping_add(1)) {
         Ok(r) => r,
         Err(e) => {
             println!("failed");
@@ -187,11 +247,15 @@ pub fn run(m: &Machine, ep: &ollama::Endpoint, fit: &zc_model::Fit, wanted: Opti
         // differently.
         m.env.virt_tag(),
         &format!("{:?}", m.backend),
+        rt.name(),
         m.hw.ram_bw_gbs,
+        m.hw.vram_bw_gbs,
         m.hw.disk_gbs,
         m.hw.gflops,
         m.hw.threads,
-        NUM_CTX,
+        // What the runtime actually ran with, not what we asked for: llama.cpp
+        // and LM Studio fix context outside the request and ignore ours.
+        run.n_ctx.unwrap_or(NUM_CTX),
         spec.active_params(),
         &cal,
         &run,
