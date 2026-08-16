@@ -179,19 +179,13 @@ pub fn run(m: &Machine, ep: &ollama::Endpoint, fit: &zc_model::Fit, wanted: Opti
         );
     }
 
-    // Collapsed to a fixed vocabulary; the vendor string would need escaping
-    // and the gate only asks whether this ran on real hardware.
-    let virt = match &m.env.virt {
-        None => "none",
-        Some(zc_probe::env::Virt::Wsl2) => "wsl2",
-        Some(zc_probe::env::Virt::Container) => "container",
-        Some(zc_probe::env::Virt::Hypervisor(_)) => "hypervisor",
-    };
-
     let line = calibrate::record_line(
         &calibrate::fingerprint(&m.profile()),
         m.env.os,
-        virt,
+        // Collapsed to a fixed vocabulary; see `Env::virt_tag`. Shared with the
+        // report so a record and a report can never classify the same machine
+        // differently.
+        m.env.virt_tag(),
         &format!("{:?}", m.backend),
         m.hw.ram_bw_gbs,
         m.hw.disk_gbs,
