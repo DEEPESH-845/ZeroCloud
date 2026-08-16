@@ -13,3 +13,4 @@ zc-probe = { path = "../zc-probe" }
 zc-bench = { path = "../zc-bench" }
 zc-model = { path = "../zc-model" }
 zc-runtime = { path = "../zc-runtime" }
+zc-report = { path = "../zc-report" }
