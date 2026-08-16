@@ -109,23 +109,9 @@ pub fn post_json(host: &str, port: u16, path: &str, body: &str) -> std::io::Resu
 
 /// Escape a string for embedding in a JSON literal.
 ///
-/// Only needed for the prompt we send. Control characters below 0x20 must be
-/// escaped or the server rejects the document.
-pub fn json_escape(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 8);
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
-            c => out.push(c),
-        }
-    }
-    out
-}
+/// Lives in `zc_model::json` alongside the reader, so writers everywhere share
+/// one implementation. Re-exported here because this is where callers expect it.
+pub use zc_model::json::escape as json_escape;
 
 #[cfg(test)]
 mod tests {
