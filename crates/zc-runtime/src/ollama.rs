@@ -6,101 +6,15 @@
 //! inside the process, with no HTTP or startup overhead in the numbers.
 //! Timing from outside would be strictly worse.
 //!
-//! `/api/show` returns the model's GGUF metadata, so we can build a ModelSpec
-//! for *any* model the user has rather than only catalog entries.
+//! It is also the only runtime here that serves full GGUF metadata
+//! (`/api/show`), so it can calibrate *any* model the user has rather than
+//! only catalogued ones. That is why it is preferred over the others.
 
-use crate::http;
+use crate::{Endpoint, InstalledModel, RunStats, Runtime};
 use zc_model::json;
 use zc_model::spec::{Attention, ModelSpec, Moe, Quant, QuantFamily};
 
-/// Where the runtime lives.
-///
-/// Carried explicitly rather than hardcoded for two reasons: users genuinely
-/// do run Ollama on another host or port (Ollama itself reads `OLLAMA_HOST`),
-/// and a hardcoded endpoint makes the happy path impossible to test without
-/// installing a runtime.
-#[derive(Debug, Clone)]
-pub struct Endpoint {
-    pub host: String,
-    pub port: u16,
-}
-
-impl Default for Endpoint {
-    fn default() -> Self {
-        Self {
-            host: "127.0.0.1".into(),
-            port: 11434,
-        }
-    }
-}
-
-impl std::fmt::Display for Endpoint {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}:{}", self.host, self.port)
-    }
-}
-
-/// Parse an `OLLAMA_HOST` value: `host`, `host:port`, or `http://host:port`.
-///
-/// Split from `from_env` so it can be tested without mutating process
-/// environment, which is global state and races with parallel tests.
-pub fn parse_host(raw: &str) -> Option<Endpoint> {
-    let raw = raw
-        .trim()
-        .trim_start_matches("http://")
-        .trim_start_matches("https://")
-        .trim_end_matches('/');
-    if raw.is_empty() {
-        return None;
-    }
-    // `[::1]:11434` — the bracketed form is the only unambiguous way to write
-    // an IPv6 address with a port. Strip the brackets: the resolver wants the
-    // bare address, and `[::1]` matches neither an IP literal nor a DNS name.
-    if let Some(rest) = raw.strip_prefix('[') {
-        let (h, tail) = rest.split_once(']')?;
-        return Some(Endpoint {
-            host: h.into(),
-            port: match tail.strip_prefix(':') {
-                Some(p) => p.parse().ok()?,
-                None => 11434,
-            },
-        });
-    }
-    // A bare IPv6 address has several colons and no port; splitting on the last
-    // one turned `::1` into host ":" port 1.
-    if raw.matches(':').count() > 1 {
-        return Some(Endpoint { host: raw.into(), port: 11434 });
-    }
-    Some(match raw.rsplit_once(':') {
-        Some((h, p)) => Endpoint {
-            host: if h.is_empty() { "127.0.0.1".into() } else { h.into() },
-            port: p.parse().ok()?,
-        },
-        None => Endpoint {
-            host: raw.into(),
-            port: 11434,
-        },
-    })
-}
-
-#[derive(Debug, Clone)]
-pub struct InstalledModel {
-    pub name: String,
-    /// On-disk size in bytes — the model's quantised weight size.
-    pub size_bytes: u64,
-    pub quant: String,
-}
-
-/// What the runtime measured, as opposed to what we predicted.
-#[derive(Debug, Clone)]
-pub struct RunStats {
-    pub model: String,
-    pub prompt_tokens: u32,
-    pub eval_tokens: u32,
-    pub prefill_tok_s: f64,
-    pub decode_tok_s: f64,
-    pub load_s: f64,
-}
+const DEFAULT_PORT: u16 = 11434;
 
 /// Map a GGUF quantisation label to its family.
 ///
@@ -110,60 +24,66 @@ pub fn quant_family(label: &str) -> QuantFamily {
     QuantFamily::from_gguf_label(label)
 }
 
-impl Endpoint {
-    pub fn from_env() -> Self {
-        std::env::var("OLLAMA_HOST")
-            .ok()
-            .and_then(|v| parse_host(&v))
-            .unwrap_or_default()
+/// The Ollama runtime.
+pub struct Ollama {
+    ep: Endpoint,
+}
+
+impl Ollama {
+    pub fn at(ep: Endpoint) -> Option<Self> {
+        ep.responds("/api/tags").then_some(Ollama { ep })
     }
 
-    pub fn is_running(&self) -> bool {
-        http::get(&self.host, self.port, "/api/tags").is_ok_and(|r| r.status == 200)
+    pub fn detect() -> Option<Self> {
+        Self::at(Endpoint::from_env("OLLAMA_HOST", DEFAULT_PORT))
+    }
+}
+
+impl Runtime for Ollama {
+    fn name(&self) -> &'static str {
+        "ollama"
+    }
+
+    fn endpoint(&self) -> &Endpoint {
+        &self.ep
     }
 
     /// Installed models, largest first.
-    pub fn list(&self) -> std::io::Result<Vec<InstalledModel>> {
-        let r = http::get(&self.host, self.port, "/api/tags")?;
-        Ok(parse_tags(&r.body))
+    fn list(&self) -> std::io::Result<Vec<InstalledModel>> {
+        Ok(parse_tags(&self.ep.get("/api/tags")?.body))
     }
 
-    /// Build a ModelSpec from the runtime's GGUF metadata.
-    pub fn describe(&self, model: &InstalledModel) -> std::io::Result<Option<ModelSpec>> {
-        let body = format!(r#"{{"model":"{}"}}"#, http::json_escape(&model.name));
-        let r = http::post_json(&self.host, self.port, "/api/show", &body)?;
+    /// Build a ModelSpec from the runtime's own GGUF metadata.
+    ///
+    /// The one runtime that can do this, which is why it can measure models
+    /// the catalog has never heard of.
+    fn describe(&self, model: &InstalledModel) -> std::io::Result<Option<ModelSpec>> {
+        let body = format!(r#"{{"model":"{}"}}"#, json::escape(&model.name));
+        let r = self.ep.post("/api/show", &body)?;
         if r.status != 200 {
             return Ok(None);
         }
         Ok(parse_show(&r.body, model))
     }
 
-    /// Run one measured generation.
-    ///
-    /// `nonce` must differ between runs. Ollama caches KV for repeated prompt
-    /// prefixes, so an identical prompt would report a near-zero prefill time
-    /// and silently corrupt the calibration.
-    ///
-    /// The prompt is deliberately long (~1200 tokens). Prefill rate measured
-    /// over a handful of tokens is dominated by fixed per-request overhead and
-    /// is far too noisy to fit a coefficient from — which is exactly what
-    /// `implied_prefill_scale` needs.
-    pub fn generate(
+    /// `num_ctx` is honoured per request here, so `RunStats::n_ctx` stays
+    /// `None` — what we asked for is what ran.
+    fn generate(
         &self,
         model: &str,
         num_predict: u32,
         num_ctx: u32,
         nonce: u64,
     ) -> std::io::Result<RunStats> {
-        let prompt = measurement_prompt(nonce);
+        let prompt = crate::measurement_prompt(nonce);
         let body = format!(
             r#"{{"model":"{}","prompt":"{}","stream":false,"options":{{"num_predict":{},"num_ctx":{},"temperature":0}}}}"#,
-            http::json_escape(model),
-            http::json_escape(&prompt),
+            json::escape(model),
+            json::escape(&prompt),
             num_predict,
             num_ctx
         );
-        let r = http::post_json(&self.host, self.port, "/api/generate", &body)?;
+        let r = self.ep.post("/api/generate", &body)?;
         if r.status != 200 {
             return Err(std::io::Error::other(format!(
                 "ollama returned {}: {}",
@@ -173,36 +93,6 @@ impl Endpoint {
         }
         Ok(parse_generate(&r.body, model))
     }
-}
-
-/// Build a long, varied prompt for measuring prefill.
-///
-/// Three requirements:
-///   * Long enough that prefill throughput is signal, not per-request overhead.
-///   * The nonce must come *first*, so a repeated run shares no cached prefix.
-///   * Varied text rather than a repeated phrase, so tokenisation stays
-///     representative instead of collapsing into one repeated token.
-pub fn measurement_prompt(nonce: u64) -> String {
-    const CLAUSES: [&str; 8] = [
-        "the measurement records throughput across successive layers",
-        "each block of weights is read once per generated token",
-        "bandwidth rather than arithmetic determines the observed rate",
-        "cache residency shifts the balance between memory and storage",
-        "quantisation changes how many bytes cross the bus per parameter",
-        "attention state grows with every token retained in context",
-        "routing selects a small subset of experts for each position",
-        "prefill processes the whole prompt in a single weight pass",
-    ];
-    // ~1200 tokens at roughly 4.5 characters per token.
-    let mut out = format!("Session {nonce}. Reference text follows. ");
-    let mut i = nonce as usize;
-    while out.len() < 5_400 {
-        i = i.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
-        out.push_str(CLAUSES[(i >> 33) % CLAUSES.len()]);
-        out.push_str(". ");
-    }
-    out.push_str("\nSummarise the text above in one short paragraph.");
-    out
 }
 
 // Parsing is split from transport so it can be tested against captured
@@ -218,6 +108,9 @@ pub fn parse_tags(body: &str) -> Vec<InstalledModel> {
             name,
             size_bytes: json::number(obj, "size").unwrap_or(0.0) as u64,
             quant: json::string(obj, "quantization_level").unwrap_or_else(|| "unknown".into()),
+            // Ollama serves full geometry from `/api/show`, so nothing has to
+            // be smuggled through the listing to verify a catalog match.
+            ..Default::default()
         });
     }
     out.sort_by_key(|m| std::cmp::Reverse(m.size_bytes));
@@ -314,6 +207,8 @@ pub fn parse_generate(s: &str, model: &str) -> RunStats {
         prefill_tok_s: if pd > 0.0 { pc / (pd / 1e9) } else { 0.0 },
         decode_tok_s: if ed > 0.0 { ec / (ed / 1e9) } else { 0.0 },
         load_s: ns("load_duration") / 1e9,
+        // Ollama honours the `num_ctx` we send.
+        n_ctx: None,
     }
 }
 
@@ -331,55 +226,6 @@ mod tests {
         assert_eq!(quant_family("F16"), QuantFamily::Float);
     }
 
-    /// Prefill measured over a short prompt is mostly per-request overhead.
-    /// The prompt must be long, varied, and nonce-prefixed.
-    #[test]
-    fn measurement_prompt_is_long_varied_and_nonce_prefixed() {
-        let a = measurement_prompt(1);
-        let b = measurement_prompt(2);
-        assert!(a.len() > 5_000, "prompt too short: {} chars", a.len());
-        assert!(a.starts_with("Session 1."), "nonce must lead the prompt");
-        assert_ne!(a, b, "different nonces must produce different prompts");
-        // Prefixes must diverge immediately or the runtime reuses cached KV.
-        assert_ne!(&a[..40], &b[..40]);
-        // Varied clauses, not one phrase repeated.
-        assert!(a.matches("bandwidth rather than").count() < 40, "too repetitive");
-    }
-
-    #[test]
-    fn parses_ollama_host_forms() {
-        let e = parse_host("http://192.168.1.5:9999").unwrap();
-        assert_eq!((e.host.as_str(), e.port), ("192.168.1.5", 9999));
-        let e = parse_host("myhost").unwrap();
-        assert_eq!((e.host.as_str(), e.port), ("myhost", 11434));
-        let e = parse_host(":11500").unwrap();
-        assert_eq!((e.host.as_str(), e.port), ("127.0.0.1", 11500));
-        assert!(parse_host("").is_none());
-
-        // The commonest spelling of all, and the one that used to fail.
-        let e = parse_host("localhost:11434").unwrap();
-        assert_eq!((e.host.as_str(), e.port), ("localhost", 11434));
-    }
-
-    /// Splitting on the last colon mangles IPv6: `[::1]:11434` kept its
-    /// brackets (which resolve to nothing) and bare `::1` became host ":"
-    /// on port 1.
-    #[test]
-    fn parses_ipv6_hosts() {
-        let e = parse_host("[::1]:11434").unwrap();
-        assert_eq!((e.host.as_str(), e.port), ("::1", 11434));
-
-        let e = parse_host("[::1]").unwrap();
-        assert_eq!((e.host.as_str(), e.port), ("::1", 11434));
-
-        let e = parse_host("http://[fe80::1]:9999").unwrap();
-        assert_eq!((e.host.as_str(), e.port), ("fe80::1", 9999));
-
-        // Unbracketed: ambiguous, so the whole value is the host.
-        let e = parse_host("::1").unwrap();
-        assert_eq!((e.host.as_str(), e.port), ("::1", 11434));
-    }
-
     #[test]
     fn parses_tags_and_sorts_largest_first() {
         let body = r#"{"models":[
@@ -392,11 +238,7 @@ mod tests {
     }
 
     fn model() -> InstalledModel {
-        InstalledModel {
-            name: "qwen3:4b".into(),
-            size_bytes: 2_600_000_000,
-            quant: "Q4_K_M".into(),
-        }
+        InstalledModel::new("qwen3:4b", 2_600_000_000, "Q4_K_M")
     }
 
     /// Dense model: architecture read straight from GGUF metadata, and KV must
