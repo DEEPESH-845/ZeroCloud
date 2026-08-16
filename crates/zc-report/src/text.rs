@@ -1,7 +1,7 @@
 //! Human-readable rendering. This is the output `zc check` has always had.
 
 use crate::Report;
-use zc_model::Verdict;
+use zc_model::{Backend, Verdict};
 use zc_probe::human;
 
 pub fn render(r: &Report) -> String {
@@ -35,6 +35,34 @@ pub fn render(r: &Report) -> String {
             }
         ),
     );
+
+    for g in r.gpus {
+        let count = if g.count > 1 {
+            format!(" x{}", g.count)
+        } else {
+            String::new()
+        };
+        push(
+            p,
+            &format!(
+                "  {}{}   {}",
+                g.name,
+                count,
+                if g.integrated {
+                    // Says nothing about VRAM on purpose: an integrated GPU has
+                    // none of its own, and Windows' "shared system memory"
+                    // figure is memory it takes from the CPU, not memory it adds.
+                    "integrated (shares system memory)".to_string()
+                } else {
+                    format!(
+                        "{} VRAM   ~{:.0} GB/s (looked up, not measured)",
+                        human(g.vram_bytes),
+                        g.bw_gbs
+                    )
+                }
+            ),
+        );
+    }
 
     push(p, "\n== measured ==");
     let mut curve = String::new();
@@ -87,16 +115,29 @@ pub fn render(r: &Report) -> String {
     );
 
     let a = &r.assumptions;
+    // On a discrete GPU the weights that matter sit in VRAM, so quoting the
+    // host RAM figure next to a GPU-speed prediction would read as a
+    // contradiction.
+    let bw = if r.backend == Backend::Discrete {
+        format!("{:.0} GB/s VRAM + {:.0} GB/s RAM", r.vram_bw_gbs, r.ram_bw_gbs)
+    } else {
+        format!("{:.0} GB/s", r.ram_bw_gbs)
+    };
     push(
         p,
         &format!(
-            "\n== predictions ==  ({:?} backend, {:.0} GB/s, KV at {}, {}-token prompt)",
+            "\n== predictions ==  ({:?} backend, {bw}, KV at {}, {}-token prompt)",
             r.backend,
-            r.ram_bw_gbs,
             a.kv_precision.to_uppercase(),
             a.prompt_tokens
         ),
     );
+    if r.backend == Backend::Discrete {
+        push(
+            p,
+            "  VRAM bandwidth is a table lookup, not a measurement - confidence is capped at 'low'",
+        );
+    }
     if a.idle_machine {
         push(p, "  assumes an otherwise-idle machine");
     }

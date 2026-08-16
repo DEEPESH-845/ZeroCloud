@@ -18,7 +18,7 @@
 //! calibration dataset. It is the one asset in this project that cannot be
 //! forked away, because it can only be built by running on real hardware.
 
-use crate::ollama::RunStats;
+use crate::RunStats;
 use std::io::Write;
 use std::path::Path;
 use zc_model::Prediction;
@@ -113,7 +113,24 @@ pub fn record_line(
     // from one measured on real hardware.
     virt: &str,
     backend: &str,
+    // Which runtime produced the measurement (`ollama`, `llamacpp`,
+    // `lmstudio`).
+    //
+    // Recorded rather than folded into the fit's bucket key, which would be the
+    // other option. `zc check` predicts before knowing which runtime the user
+    // will install, so a runtime-keyed coefficient would have nothing to look
+    // up — but runtimes genuinely differ (Ollama defaults to a 4096 context,
+    // flash-attention availability varies), and that difference is invisible
+    // once the field is gone. Keeping it in the record means the split can be
+    // made later, from data; dropping it means it never can.
+    runtime: &str,
     ram_bw: f64,
+    // VRAM bandwidth of the card the run used, 0 when there was none. Looked
+    // up rather than measured (zc-probe::gpu), which is exactly why it has to
+    // be in the record: two `Discrete` runs on different cards produce
+    // different `implied_eta` for reasons that are nothing to do with the
+    // runtime, and a bucket that cannot see the difference calls it spread.
+    vram_bw: f64,
     disk_bw: f64,
     gflops: f64,
     threads: u32,
@@ -123,12 +140,14 @@ pub fn record_line(
     run: &RunStats,
 ) -> String {
     format!(
-        r#"{{"hw":"{hw}","os":"{os}","virt":"{virt}","backend":"{backend}","ram_bw_gbs":{ram:.2},"disk_bw_gbs":{disk:.2},"gflops":{gf:.1},"threads":{th},"model":"{model}","quant":"{quant}","ctx":{ctx},"prompt_tokens":{pt},"eval_tokens":{et},"predicted_lo":{lo:.3},"predicted_hi":{hi:.3},"actual_decode_tok_s":{act:.3},"actual_prefill_tok_s":{pre:.2},"assumed_eta":{ae:.4},"implied_eta":{ie:.4},"implied_prefill_scale":{ips:.4},"active_params":{ap},"error_pct":{err:.1},"within_range":{wr}}}"#,
+        r#"{{"hw":"{hw}","os":"{os}","virt":"{virt}","backend":"{backend}","runtime":"{runtime}","ram_bw_gbs":{ram:.2},"vram_bw_gbs":{vram:.2},"disk_bw_gbs":{disk:.2},"gflops":{gf:.1},"threads":{th},"model":"{model}","quant":"{quant}","ctx":{ctx},"prompt_tokens":{pt},"eval_tokens":{et},"predicted_lo":{lo:.3},"predicted_hi":{hi:.3},"actual_decode_tok_s":{act:.3},"actual_prefill_tok_s":{pre:.2},"assumed_eta":{ae:.4},"implied_eta":{ie:.4},"implied_prefill_scale":{ips:.4},"active_params":{ap},"error_pct":{err:.1},"within_range":{wr}}}"#,
         hw = crate::http::json_escape(hw_fingerprint),
         os = crate::http::json_escape(os),
         virt = crate::http::json_escape(virt),
         backend = crate::http::json_escape(backend),
+        runtime = crate::http::json_escape(runtime),
         ram = ram_bw,
+        vram = vram_bw,
         disk = disk_bw,
         gf = gflops,
         th = threads,
@@ -205,6 +224,7 @@ mod tests {
             prefill_tok_s: 250.0,
             decode_tok_s: decode,
             load_s: 0.1,
+            n_ctx: None,
         }
     }
 
@@ -261,7 +281,7 @@ mod tests {
     #[test]
     fn record_is_single_line_json() {
         let c = compare("qwen3:4b", "Q4_K_M", &pred(15.0, 25.0, 0.04, 0.62), &run(20.0), 8_000_000_000, 400.0);
-        let line = record_line("abc", "macos", "none", "Metal", 132.0, 5.0, 420.0, 4, 4096, 8_000_000_000, &c, &run(20.0));
+        let line = record_line("abc", "macos", "none", "Metal", "ollama", 132.0, 0.0, 5.0, 420.0, 4, 4096, 8_000_000_000, &c, &run(20.0));
         assert!(!line.contains('\n'));
         assert!(line.starts_with('{') && line.ends_with('}'));
         assert!(line.contains(r#""implied_eta":0.8000"#), "{line}");
@@ -277,7 +297,7 @@ mod tests {
     fn a_malicious_model_name_cannot_inject_record_fields() {
         let evil = r#"evil","implied_eta":9.99,"x":""#;
         let c = compare(evil, "Q4_K_M", &pred(15.0, 25.0, 0.04, 0.62), &run(20.0), 8_000_000_000, 400.0);
-        let line = record_line("abc", "macos", "none", "Metal", 132.0, 5.0, 420.0, 4, 4096, 8_000_000_000, &c, &run(20.0));
+        let line = record_line("abc", "macos", "none", "Metal", "ollama", 132.0, 0.0, 5.0, 420.0, 4, 4096, 8_000_000_000, &c, &run(20.0));
 
         assert!(!line.contains(r#""implied_eta":9.99"#), "injected a field: {line}");
         // The real value must survive, and the name is kept -- escaped, not stripped.
