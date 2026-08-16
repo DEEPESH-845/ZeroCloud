@@ -7,13 +7,16 @@
 
 use zc_bench::{compute, disk, ram};
 use zc_model::{predict, Backend, Hardware};
-use zc_probe::{cpu, env, memory, storage};
+use zc_probe::{cpu, env, gpu, memory, storage};
 
 pub struct Machine {
     pub mem: memory::Memory,
     pub cpu: cpu::Cpu,
     pub env: env::Env,
     pub storage: storage::Storage,
+    /// Every adapter found, integrated ones included. Only the largest
+    /// discrete one feeds the prediction.
+    pub gpus: Vec<gpu::Gpu>,
     pub ram: ram::RamResult,
     pub compute: compute::ComputeResult,
     pub disk: Option<disk::DiskResult>,
@@ -27,8 +30,16 @@ pub struct Machine {
 
 impl Machine {
     /// Stable, non-identifying description used to group calibration records.
+    ///
+    /// The discrete card is part of the machine's identity: two laptops with
+    /// the same CPU and RAM but different GPUs decode at completely different
+    /// speeds, and `zc gate` medians *per machine* — so sharing a bucket would
+    /// let one card's error cancel another's and hide a real miss.
+    ///
+    /// Appended only when a card is present, so every existing GPU-less record
+    /// keeps the fingerprint it was written with.
     pub fn profile(&self) -> String {
-        format!(
+        let base = format!(
             "{}|{}P{}E|{}|{}|{:?}",
             self.cpu.brand,
             self.cpu.p_cores,
@@ -36,7 +47,11 @@ impl Machine {
             self.mem.total,
             self.env.os,
             self.storage.medium
-        )
+        );
+        match self.gpus.iter().find(|g| !g.integrated && g.vram_bytes > 0) {
+            Some(g) => format!("{base}|{}|{}", g.name, g.vram_bytes),
+            None => base,
+        }
     }
 }
 
@@ -45,6 +60,7 @@ pub fn probe() -> Machine {
     let cpu = cpu::probe();
     let env = env::probe(mem.total);
     let storage = storage::probe();
+    let gpus = gpu::probe();
     let p_threads = cpu.p_cores.max(1) as usize;
 
     let mut counts = vec![1usize, 2, p_threads, cpu.physical as usize];
@@ -58,10 +74,23 @@ pub fn probe() -> Machine {
     let budget_idle = predict::potential_budget(mem.total, env.memory_ceiling, reserved);
     let budget_now = predict::current_budget(mem.total, mem.available, env.memory_ceiling, reserved);
 
+    // A card too small to hold anything useful is not worth switching backend
+    // for: the runtime will offload a handful of layers at best, and the
+    // prediction is better served by the CPU path it will mostly take.
+    const MIN_DISCRETE_VRAM: u64 = 2 << 30;
+    let card = gpus
+        .iter()
+        .filter(|g| !g.integrated && g.vram_bytes >= MIN_DISCRETE_VRAM)
+        .max_by_key(|g| g.vram_bytes);
+
     // Apple Silicon runtimes default to Metal, and on unified memory the GPU
     // reaches close to the all-core peak — well above what the CPU cluster
     // alone sustains. Predicting Metal from a CPU figure understates badly.
-    let backend = if mem.unified { Backend::Metal } else { Backend::Cpu };
+    let backend = match card {
+        Some(_) => Backend::Discrete,
+        None if mem.unified => Backend::Metal,
+        None => Backend::Cpu,
+    };
     let ram_infer = ram
         .by_threads
         .iter()
@@ -83,6 +112,12 @@ pub fn probe() -> Machine {
         gflops: compute.gflops_nt,
         usable_bytes: budget_idle,
         threads: cpu.recommended_threads,
+        vram_bytes: card.map_or(0, |g| g.vram_bytes),
+        vram_bw_gbs: card.map_or(0.0, |g| g.bw_gbs),
+        // ponytail: no GPU bandwidth benchmark exists yet, so this is always a
+        // table lookup and `predict` caps confidence accordingly. Flip it in
+        // this one place when zc-bench grows a device-side read probe.
+        vram_bw_measured: false,
     };
 
     Machine {
@@ -90,6 +125,7 @@ pub fn probe() -> Machine {
         cpu,
         env,
         storage,
+        gpus,
         ram,
         compute,
         disk,

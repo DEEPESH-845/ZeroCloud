@@ -83,6 +83,29 @@ pub fn render(r: &Report) -> String {
         o.push_str(&hazard_json(h));
     }
     o.push_str("]},");
+
+    // `vram_bytes` is per card and 0 for integrated parts — see zc-probe::gpu.
+    // `bw_gbs` is looked up rather than measured, and says so, because a
+    // consumer that cannot tell the two apart will treat both as measured.
+    o.push_str("\"gpus\":[");
+    for (i, g) in r.gpus.iter().enumerate() {
+        if i > 0 {
+            o.push(',');
+        }
+        o.push_str(&format!(
+            "{{\"name\":{},\"vendor\":{},\"vram_bytes\":{},\"integrated\":{},\"count\":{},\
+             \"source\":{},\"bw_gbs\":{},\"bw_measured\":false}}",
+            st(&g.name),
+            st(g.vendor.tag()),
+            g.vram_bytes,
+            g.integrated,
+            g.count,
+            st(g.source),
+            num(g.bw_gbs),
+        ));
+    }
+    o.push_str("],");
+
     o.push_str(&format!(
         "\"budget\":{{\"idle\":{},\"now\":{}}}}},",
         r.budget_idle, r.budget_now
@@ -131,10 +154,13 @@ pub fn render(r: &Report) -> String {
     // -- assumptions --------------------------------------------------------
     let a = &r.assumptions;
     o.push_str(&format!(
-        "\"assumptions\":{{\"backend\":{},\"ram_bw_gbs\":{},\"disk_gbs\":{},\"kv_precision\":{},\
+        "\"assumptions\":{{\"backend\":{},\"ram_bw_gbs\":{},\"vram_bytes\":{},\"vram_bw_gbs\":{},\
+         \"vram_bw_measured\":false,\"disk_gbs\":{},\"kv_precision\":{},\
          \"prompt_tokens\":{},\"ubatch\":{},\"idle_machine\":{},\"uncalibrated\":{},\"prefill_unmeasured\":{}}},",
         st(backend_tag(r.backend)),
         num(r.ram_bw_gbs),
+        r.vram_bytes,
+        num(r.vram_bw_gbs),
         num(r.disk_gbs),
         st(a.kv_precision),
         a.prompt_tokens,
