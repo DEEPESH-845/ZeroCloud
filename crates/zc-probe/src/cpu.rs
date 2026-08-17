@@ -39,6 +39,16 @@ pub struct Cpu {
     pub features: IsaFeatures,
     /// What we will actually tell the user to run inference with.
     pub recommended_threads: u32,
+    /// The values this struct was derived *from*, for `zc doctor`.
+    ///
+    /// Only the CPU carries these. Memory and storage read one or two numbers
+    /// and report them almost unchanged, so their derived struct is already the
+    /// raw reading; core topology is a multi-step walk that can be wrong in
+    /// ways the result does not reveal — the Windows
+    /// `GetLogicalProcessorInformationEx` pass is still marked UNVALIDATED, and
+    /// the only way to validate it on a machine we do not own is to see what it
+    /// actually read.
+    pub raw: Vec<(String, String)>,
 }
 
 impl Cpu {
@@ -135,7 +145,28 @@ mod imp {
             .or_else(|| num("hw.l2cachesize"))
             .unwrap_or(8 << 20);
 
+        // The sysctls the fields above came from, in the order they are read.
+        let raw = [
+            "hw.physicalcpu",
+            "hw.logicalcpu",
+            "hw.nperflevels",
+            "hw.perflevel0.physicalcpu",
+            "hw.perflevel1.physicalcpu",
+            "hw.l3cachesize",
+            "hw.l2cachesize",
+            "hw.cachelinesize",
+        ]
+        .iter()
+        .map(|k| {
+            (
+                k.to_string(),
+                num(k).map_or_else(|| "absent".into(), |v| v.to_string()),
+            )
+        })
+        .collect();
+
         Cpu {
+            raw,
             brand: string("machdep.cpu.brand_string").unwrap_or_else(|| "unknown".into()),
             physical,
             logical,
@@ -262,7 +293,25 @@ mod imp {
             .map(|(_, v)| v.split_whitespace().collect())
             .unwrap_or_default();
 
+        let raw = vec![
+            ("cpuinfo.processor_lines".into(), logical.to_string()),
+            ("cpuinfo.distinct_core_ids".into(), seen.len().to_string()),
+            (
+                "sys.devices.cpu_core/cpus".into(),
+                read("/sys/devices/cpu_core/cpus").unwrap_or_else(|| "absent".into()),
+            ),
+            (
+                "sys.devices.cpu_atom/cpus".into(),
+                read("/sys/devices/cpu_atom/cpus").unwrap_or_else(|| "absent".into()),
+            ),
+            (
+                "cpu0.cpu_capacity".into(),
+                read("/sys/devices/system/cpu/cpu0/cpu_capacity").unwrap_or_else(|| "absent".into()),
+            ),
+        ];
+
         Cpu {
+            raw,
             brand,
             physical,
             logical,
@@ -315,6 +364,10 @@ mod imp {
             ) != 0
         };
 
+        // Every EfficiencyClass value seen, in walk order. This is the reading
+        // the UNVALIDATED derivation turns into p/e core counts, and the only
+        // thing that can show whether it walked the stream correctly.
+        let mut classes: Vec<String> = Vec::new();
         let (mut physical, mut logical, mut p_cores, mut e_cores) = (0u32, 0u32, 0u32, 0u32);
         if ok {
             let mut off = 0usize;
@@ -330,6 +383,7 @@ mod imp {
                 let p = unsafe { &rec.Anonymous.Processor };
                 // Each GroupMask bit is one logical processor on this core.
                 logical += p.GroupMask[0].Mask.count_ones();
+                classes.push(p.EfficiencyClass.to_string());
                 // EfficiencyClass: higher is faster. 0 = slowest tier.
                 if p.EfficiencyClass > 0 {
                     p_cores += 1;
@@ -347,6 +401,12 @@ mod imp {
         }
 
         Cpu {
+            raw: vec![
+                ("GetLogicalProcessorInformationEx.ok".into(), ok.to_string()),
+                ("buffer_bytes".into(), len.to_string()),
+                ("core_records".into(), physical.to_string()),
+                ("efficiency_classes".into(), classes.join(",")),
+            ],
             brand: std::env::var("PROCESSOR_IDENTIFIER").unwrap_or_else(|_| "unknown".into()),
             physical: physical.max(1),
             logical: logical.max(1),
