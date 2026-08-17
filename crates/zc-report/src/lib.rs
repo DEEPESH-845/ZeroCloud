@@ -11,6 +11,7 @@
 //! in sync forever, which is the same drift problem one layer down.
 
 pub mod json;
+pub mod markdown;
 pub mod text;
 
 use zc_bench::{compute::ComputeResult, disk::DiskResult, ram::RamResult};
@@ -38,6 +39,13 @@ pub struct Assumptions {
     /// True when no prefill measurement exists for this backend, so TTFT is
     /// reported as unknown rather than derived.
     pub prefill_unmeasured: bool,
+    /// How many rows the catalog produced, before `--top` cut it down.
+    ///
+    /// The cut is applied when the report is *built*, not when it is rendered,
+    /// so `--json` and the terminal always describe the same set. A limit that
+    /// only existed in one renderer would make the two surfaces disagree about
+    /// what a machine can run, which is the drift this crate exists to stop.
+    pub total_rows: usize,
 }
 
 pub struct Report<'a> {

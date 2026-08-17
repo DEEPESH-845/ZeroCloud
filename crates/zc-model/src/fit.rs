@@ -85,12 +85,25 @@ impl Confidence {
     ///
     /// A floor, not the value: if the observed spread is wider than this, the
     /// observed spread wins.
+    ///
+    /// The `Prior` figure is the one with evidence behind it, and it is worth
+    /// stating where that evidence came from. The first real measurement this
+    /// project ever took landed *outside* the range it published: prior eta
+    /// 0.616 against a true 0.859, so the truth sat 39.5% above the midpoint of
+    /// a range that reached only 30%. A floor that cannot cover the one error
+    /// we have measured is not a floor, so it is now 0.40.
+    ///
+    /// ponytail: fitted to a single observation, which is weak. The upgrade is
+    /// to derive it from the dispersion of `implied_eta / assumed_eta` across
+    /// machines once there are enough of them to have a distribution — the
+    /// shipped prior's error is a measurable quantity, and this constant is a
+    /// placeholder for measuring it.
     pub fn min_spread(self) -> f64 {
         match self {
             Confidence::High => 0.08,
             Confidence::Medium => 0.15,
             Confidence::Low => 0.25,
-            Confidence::Prior => 0.30,
+            Confidence::Prior => 0.40,
         }
     }
 
@@ -127,6 +140,18 @@ pub(crate) fn median(v: &mut [f64]) -> f64 {
         (v[n / 2 - 1] + v[n / 2]) / 2.0
     }
 }
+
+/// How many standard deviations wide the published range is, each side.
+///
+/// [`mad`] returns an estimate of sigma, so publishing it directly would give a
+/// range covering roughly 68% of runs — a promise that is broken one time in
+/// three, which is not a promise. 1.645 is the 95th percentile of a normal
+/// distribution, making the two-sided range a 90% interval: one run in ten
+/// falls outside, and `within_range` in `zc gate` is the number that proves it.
+///
+/// Not higher, because a range wide enough never to be wrong tells the user
+/// nothing. 90% is the point where the range is still a decision aid.
+const COVERAGE: f64 = 1.645;
 
 /// Median absolute deviation, scaled to be comparable with a standard
 /// deviation for normally distributed data (the 1.4826 factor).
@@ -223,7 +248,7 @@ impl Fit {
             .map(|(backend, (mut vals, eff_sum))| {
                 let n = vals.len();
                 let eta = median(&mut vals);
-                let observed = if eta > 0.0 { mad(&vals, eta) / eta } else { 0.0 };
+                let observed = if eta > 0.0 { COVERAGE * mad(&vals, eta) / eta } else { 0.0 };
                 (
                     backend,
                     Parent {
@@ -254,7 +279,7 @@ impl Fit {
                 let n = vals.len();
                 let scale = median(&mut vals);
                 let confidence = Confidence::from_count(n);
-                let observed = if scale > 0.0 { mad(&vals, scale) / scale } else { 0.0 };
+                let observed = if scale > 0.0 { COVERAGE * mad(&vals, scale) / scale } else { 0.0 };
                 (
                     backend,
                     Coefficient {
@@ -273,7 +298,7 @@ impl Fit {
                 let n = vals.len();
                 let eta = median(&mut vals);
                 let confidence = Confidence::from_count(n);
-                let observed = if eta > 0.0 { mad(&vals, eta) / eta } else { 0.0 };
+                let observed = if eta > 0.0 { COVERAGE * mad(&vals, eta) / eta } else { 0.0 };
                 (
                     k,
                     Coefficient {
@@ -421,6 +446,50 @@ mod tests {
         rs.push(rec_p("Metal", "Q4_K_M", 0.85, 0.4));
         let s = Fit::from_records(&rs).prefill_scale("Metal").expect("metal");
         assert!((s.eta - 8.0).abs() < 1e-9, "{}", s.eta);
+    }
+
+    /// The published range is a 90% interval, not a one-sigma band.
+    ///
+    /// Hand-computed: forty samples split evenly between 0.75 and 0.85 have a
+    /// median of 0.80 and a median absolute deviation of exactly 0.05, so
+    /// sigma-hat is 0.05 * 1.4826 = 0.074130 and the relative spread must be
+    /// 1.645 * 0.074130 / 0.80 = 0.152430. Publishing sigma alone would have
+    /// given 0.0927 — a range broken one run in three while claiming to be a
+    /// promise.
+    #[test]
+    fn a_published_range_is_a_ninety_percent_interval_not_one_sigma() {
+        let rs: Vec<Record> = (0..40)
+            .map(|i| rec("Metal", "Q4_K_M", if i % 2 == 0 { 0.75 } else { 0.85 }))
+            .collect();
+        let c = Fit::from_records(&rs).lookup("Metal", QuantFamily::KQuant, 0.62);
+
+        assert_eq!(c.confidence, Confidence::High);
+        assert!((c.eta - 0.80).abs() < 1e-9, "eta {}", c.eta);
+        assert!(
+            (c.spread - 0.152_430).abs() < 1e-5,
+            "spread {} should be 1.645 sigma, not 1 sigma",
+            c.spread
+        );
+    }
+
+    /// The floor for an uncalibrated machine has to cover the error we have
+    /// actually observed in the shipped prior, or the range is decoration.
+    ///
+    /// From the first real measurement ever taken: assumed eta 0.616 against a
+    /// true 0.859, so the truth sat 0.859 / 0.616 - 1 = 39.45% above the
+    /// midpoint. The old 30% floor missed it; `within_range` was 0%.
+    #[test]
+    fn the_prior_range_covers_the_one_miss_on_record() {
+        let observed_error = 0.859 / 0.616 - 1.0;
+        assert!(
+            Confidence::Prior.min_spread() >= observed_error,
+            "prior floor {} cannot cover a measured error of {observed_error:.4}",
+            Confidence::Prior.min_spread()
+        );
+        // And an uncalibrated lookup really does publish that floor.
+        let c = Fit::default().lookup("Metal", QuantFamily::KQuant, 0.616);
+        assert_eq!(c.confidence, Confidence::Prior);
+        assert!(c.spread >= observed_error, "spread {}", c.spread);
     }
 
     #[test]

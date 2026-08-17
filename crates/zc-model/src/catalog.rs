@@ -53,6 +53,9 @@ pub fn parse_model(src: &str) -> Option<ModelSpec> {
         n_vocab: num("n_vocab")? as u32,
         params: num("params")? as u64,
         attention: parse_attention(json::object_at(src, "attention")?)?,
+        // Optional: older hand-written entries predate the field, and a model
+        // that does not state a trained context is limited only by memory.
+        n_ctx_train: num("n_ctx_train").map(|v| v as u32).filter(|&v| v > 0),
         moe: json::object_at(src, "moe").and_then(|o| {
             Some(Moe {
                 n_expert: json::number(o, "n_expert")? as u32,
@@ -76,17 +79,57 @@ pub fn parse_model(src: &str) -> Option<ModelSpec> {
     (!spec.quants.is_empty()).then_some(spec)
 }
 
+/// Directories searched for catalog files, lowest precedence first.
+///
+/// `ZC_DATA_DIR` replaces the list outright, because a caller who names a
+/// directory means that one and not also two others.
+///
+/// Otherwise: the repo's own `data/models` (so a contributor can iterate
+/// without rebuilding), then the user's config directory. The second is what
+/// makes an *installed* binary extensible — `data/models` is relative to the
+/// working directory and does not exist for someone who installed a release,
+/// so without it "add your own model" means "clone and rebuild".
+pub fn search_dirs() -> Vec<std::path::PathBuf> {
+    if let Ok(d) = std::env::var("ZC_DATA_DIR") {
+        return vec![std::path::PathBuf::from(d)];
+    }
+    let mut dirs = vec![std::path::PathBuf::from("data/models")];
+    if let Some(cfg) = user_config_dir() {
+        dirs.push(cfg.join("zerocloud").join("models"));
+    }
+    dirs
+}
+
+/// The OS convention for per-user configuration.
+///
+/// Hand-rolled rather than a `dirs` dependency: it is three env lookups, and
+/// `zc-model` has no dependencies at all — that is a property worth more than
+/// the crate.
+fn user_config_dir() -> Option<std::path::PathBuf> {
+    let var = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
+    if cfg!(target_os = "windows") {
+        return var("APPDATA").map(Into::into);
+    }
+    if cfg!(target_os = "macos") {
+        return var("HOME").map(|h| std::path::PathBuf::from(h).join("Library/Application Support"));
+    }
+    var("XDG_CONFIG_HOME")
+        .map(Into::into)
+        .or_else(|| var("HOME").map(|h| std::path::PathBuf::from(h).join(".config")))
+}
+
 /// Every model in the embedded catalog, plus any override directory.
 ///
 /// Precedence: a file on disk with the same `id` replaces the embedded entry,
-/// so a contributor can iterate on `data/models/` without rebuilding.
+/// so a contributor can iterate on `data/models/` without rebuilding, and a
+/// user can correct or add an entry without touching the binary.
 pub fn load() -> Vec<ModelSpec> {
     let mut out: Vec<ModelSpec> = EMBEDDED.iter().filter_map(|s| parse_model(s)).collect();
 
-    let dir = std::env::var("ZC_DATA_DIR")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| std::path::PathBuf::from("data/models"));
-    if let Ok(entries) = std::fs::read_dir(&dir) {
+    for dir in search_dirs() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
         for path in entries
             .flatten()
             .map(|e| e.path())
@@ -179,11 +222,94 @@ mod tests {
         ));
     }
 
+    /// A catalog file states a quantisation's `family` tag separately from its
+    /// `name`, and the family sets dequantisation cost — a first-order term in
+    /// decode speed. A hand-edited entry that tags `IQ3_XXS` as `k_quant`
+    /// predicts it ~20% too fast, with nothing in the output to show for it.
     #[test]
     fn quant_families_round_trip_from_data() {
-        let m = get("qwen3-30b-a3b");
-        assert_eq!(m.quants[0].family, QuantFamily::KQuant);
-        assert_eq!(m.quants[1].family, QuantFamily::IQuant);
+        let mut families: Vec<QuantFamily> = Vec::new();
+        for m in builtin() {
+            for q in &m.quants {
+                assert_eq!(
+                    q.family,
+                    QuantFamily::from_gguf_label(&q.name),
+                    "{} {} is tagged {:?} but its label says otherwise",
+                    m.id,
+                    q.name,
+                    q.family
+                );
+                if !families.contains(&q.family) {
+                    families.push(q.family);
+                }
+            }
+        }
+        // Both families must actually appear, or the loop above proves nothing.
+        assert!(families.contains(&QuantFamily::KQuant));
+        assert!(families.contains(&QuantFamily::IQuant));
+    }
+
+    /// Every quantisation in the catalog must be a physically possible size for
+    /// the format it claims.
+    ///
+    /// The catalog is generated now, and generation reads a file listing that
+    /// can be misread. It was: Qwen publishes both a sharded set and a merged
+    /// file for the same quantisation, and summing across both doubled every
+    /// figure. A doubled Q4_K_M predicts twice the memory the model needs, on
+    /// exactly the machines where that decides the answer.
+    ///
+    /// This is the same check `scripts/ingest_hf.py` runs, kept here as well so
+    /// a hand-edited PR fails the build rather than the honour system. The band
+    /// is asymmetric because small models legitimately run high — an embedding
+    /// table kept at higher precision dominates a 360M file — while nothing
+    /// legitimately comes in far under its own format.
+    #[test]
+    fn every_catalog_quant_is_plausible_for_its_format() {
+        // llama.cpp's published bits-per-weight.
+        const BPW: &[(&str, f64)] = &[
+            ("Q4_K_M", 4.85),
+            ("Q5_K_M", 5.69),
+            ("Q6_K", 6.56),
+            ("Q8_0", 8.50),
+            ("IQ2_XXS", 2.06),
+            ("IQ3_XXS", 3.06),
+            ("IQ4_XS", 4.25),
+        ];
+        for m in builtin() {
+            assert!(m.params > 0 && m.n_layers > 0 && m.n_vocab > 0, "{}", m.id);
+            assert!(m.kv_bytes(1, KvPrecision::F16) > 0, "{} has no KV", m.id);
+            for q in &m.quants {
+                let Some((_, expected)) = BPW.iter().find(|(n, _)| *n == q.name) else {
+                    continue; // a quantisation this test has no figure for
+                };
+                let bpw = q.bytes as f64 * 8.0 / m.params as f64;
+                assert!(
+                    bpw >= 0.55 * expected && bpw <= 1.7 * expected,
+                    "{} {} is {bpw:.2} bits/weight, which is not {} ({expected})",
+                    m.id,
+                    q.name,
+                    q.name
+                );
+            }
+        }
+    }
+
+    /// `ZC_DATA_DIR` must replace the search path, not extend it. A caller who
+    /// names one directory — a test, a validation run — must not silently also
+    /// pick up whatever the developer left in their config directory.
+    #[test]
+    fn an_explicit_data_dir_replaces_the_search_path() {
+        // SAFETY: single-threaded within this test, and the value is restored.
+        // `search_dirs` reads the environment, which is process-global.
+        let before = std::env::var("ZC_DATA_DIR").ok();
+        unsafe { std::env::set_var("ZC_DATA_DIR", "/tmp/zc-test-models") };
+        assert_eq!(search_dirs(), vec![std::path::PathBuf::from("/tmp/zc-test-models")]);
+        unsafe {
+            match before {
+                Some(v) => std::env::set_var("ZC_DATA_DIR", v),
+                None => std::env::remove_var("ZC_DATA_DIR"),
+            }
+        }
     }
 
     /// Malformed or incomplete entries must be dropped, never half-loaded.
@@ -215,10 +341,21 @@ mod tests {
 
     /// Catalog is sorted small-to-large so the report leads with what is most
     /// likely to run on a constrained machine.
+    ///
+    /// Pinned to a property rather than to a particular model: the catalog is
+    /// generated now (`scripts/ingest_hf.py`) and naming its smallest entry
+    /// would fail every time a smaller one is added, which is a change we want.
     #[test]
     fn catalog_is_sorted_by_size() {
         let v = builtin();
         assert!(v.windows(2).all(|w| w[0].params <= w[1].params));
-        assert_eq!(v[0].id, "qwen3-4b");
+        // A user on 4 GB must not have to scroll past a 70B model to find
+        // something they can run.
+        assert!(
+            v[0].params < 1_000_000_000,
+            "catalog leads with {} at {} params",
+            v[0].id,
+            v[0].params
+        );
     }
 }

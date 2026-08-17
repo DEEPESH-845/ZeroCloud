@@ -21,6 +21,36 @@ pub enum KvPrecision {
 }
 
 impl KvPrecision {
+    /// What a runtime uses unless told otherwise.
+    ///
+    /// Every runtime we speak to ships f16 KV by default — Ollama needs
+    /// `OLLAMA_KV_CACHE_TYPE` *and* flash attention to change it, llama.cpp
+    /// needs `--cache-type-k`. Predicting Q8 while the user runs f16 nearly
+    /// doubles the context we advertise, which is the one number people decide
+    /// on. None of the three reports its KV type over its API, so this is a
+    /// stated assumption the user can override, not a reading.
+    pub const DEFAULT: Self = KvPrecision::F16;
+
+    /// Parse a CLI value. `None` for anything unrecognised, so a typo becomes
+    /// an error rather than a silent fallback to a different memory model.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.to_ascii_lowercase().as_str() {
+            "f16" | "fp16" => Some(KvPrecision::F16),
+            "q8" | "q8_0" => Some(KvPrecision::Q8),
+            "q4" | "q4_0" => Some(KvPrecision::Q4),
+            _ => None,
+        }
+    }
+
+    /// Stable tag for reports and records.
+    pub fn tag(self) -> &'static str {
+        match self {
+            KvPrecision::F16 => "f16",
+            KvPrecision::Q8 => "q8",
+            KvPrecision::Q4 => "q4",
+        }
+    }
+
     /// Bytes per element, including quantisation scale overhead.
     pub fn bytes(self) -> f64 {
         match self {
