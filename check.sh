@@ -17,7 +17,11 @@ cargo clippy --workspace --all-targets -- -D warnings
 for t in "${TARGETS[@]}"; do
   if rustup target list --installed | grep -qx "$t"; then
     echo "== check $t =="
-    cargo check --workspace --all-targets --target "$t" --quiet
+    # clippy, not check: the host clippy pass above never compiles the
+    # `#[cfg(target_os = ...)]` blocks in disk.rs, cpu.rs and gpu.rs, so a lint
+    # error inside them stayed invisible locally and turned CI red for days.
+    # clippy subsumes check, so this is strictly stronger and no slower.
+    cargo clippy --workspace --all-targets --target "$t" --quiet -- -D warnings
   else
     echo "== skip $t (not installed: rustup target add $t) =="
   fi
