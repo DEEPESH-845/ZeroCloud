@@ -201,7 +201,12 @@ pub fn predict_with(
     let after_bufs = pool.saturating_sub(compute_buf);
     let weights_cached = quant.bytes.min(after_bufs.saturating_sub(kv_floor));
     let for_kv = after_bufs.saturating_sub(weights_cached);
-    let max_context = spec.max_context_in(for_kv, kv_prec);
+    // Memory is not the only ceiling. A sliding-window model stops accumulating
+    // KV once the window fills, so the budget alone would report a context the
+    // model was never trained to handle.
+    let max_context = spec
+        .max_context_in(for_kv, kv_prec)
+        .min(spec.n_ctx_train.unwrap_or(u32::MAX));
 
     // Operating point for the speed estimate: a realistic conversation length,
     // not the theoretical ceiling.
@@ -354,6 +359,7 @@ mod tests {
             params: 8_030_000_000,
             attention: Attention::Gqa { n_kv_heads: 8, head_dim: 128 },
             moe: None,
+            n_ctx_train: None,
             quants: vec![],
         }
     }
@@ -367,6 +373,7 @@ mod tests {
             params: 70_600_000_000,
             attention: Attention::Gqa { n_kv_heads: 8, head_dim: 128 },
             moe: None,
+            n_ctx_train: None,
             quants: vec![],
         }
     }
@@ -422,6 +429,7 @@ mod tests {
                 expert_params: 44_000_000,
                 shared_params: 17_000_000_000,
             }),
+            n_ctx_train: None,
             quants: vec![],
         };
         assert_eq!(dsv3.kv_bytes(1, KvPrecision::F16), 70_272);
@@ -445,6 +453,7 @@ mod tests {
                 global_every: 6,
             },
             moe: None,
+            n_ctx_train: None,
             quants: vec![],
         };
         let at_8k = g.kv_bytes(8192, KvPrecision::F16) as f64;
@@ -485,6 +494,7 @@ mod tests {
                 ssm_state_bytes: 512 * 1024,
             },
             moe: None,
+            n_ctx_train: None,
             quants: vec![],
         };
         let full_attn = llama3_8b().kv_bytes(32768, KvPrecision::F16);
@@ -508,6 +518,7 @@ mod tests {
                 expert_params: 25_000_000,
                 shared_params: 2_400_000_000,
             }),
+            n_ctx_train: None,
             quants: vec![],
         };
         let frac = m.active_params() as f64 / m.params as f64;
@@ -640,6 +651,7 @@ mod tests {
                 expert_params: 4_718_592,
                 shared_params: 1_510_000_000,
             }),
+            n_ctx_train: None,
             quants: vec![],
         };
         // 19 GiB of weights, 12 GiB budget -> roughly 60% of the file cached.
@@ -672,6 +684,7 @@ mod tests {
                 // Hot core is over half the model.
                 shared_params: 16_000_000_000,
             }),
+            n_ctx_train: None,
             quants: vec![],
         };
         let quant = q("Q4_K_M", 19_971_519_744, crate::spec::QuantFamily::KQuant);
