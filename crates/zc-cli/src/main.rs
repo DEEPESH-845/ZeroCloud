@@ -1,4 +1,5 @@
 mod check;
+mod doctor;
 mod fit_cmd;
 mod gate_cmd;
 mod machine;
@@ -8,11 +9,13 @@ const HELP: &str = "\
 zc - what can this machine run, and how fast?
 
 USAGE
-    zc [check] [--json]   probe hardware and predict model performance
+    zc [check] [--json] [--kv f16|q8|q4] [--top N | --all]
+                          probe hardware and predict model performance
     zc verify [MODEL] [--runtime NAME]
                           run a real model and compare against the prediction
     zc fit                show fitted coefficients and how much evidence backs them
     zc gate               how wrong have we been? (exits non-zero until it passes)
+    zc doctor             everything probed, measured and concluded, as Markdown
     zc --help
 
 Both commands run a ~20s hardware benchmark first. Nothing leaves this
@@ -25,7 +28,16 @@ zc check
                    Runs nvidia-smi / lspci / powershell read-only to find GPUs,
                    each abandoned after 4s.
     EXIT CODES     0 always.
-    AGENT USAGE    `zc check --json` emits one object:
+    AGENT USAGE    One row per model by default: the highest-fidelity
+                   quantisation with the best verdict, since bytes per
+                   parameter is measured and model quality is not.
+                   Rows are ranked verdict, then decode speed, then context -
+                   every term measured or derived, never a blended score.
+                   `--all` lists every quantisation and lifts the row limit;
+                   `--top N` (default 20) sets it. The cut applies to `--json`
+                   identically, and `.assumptions.total_rows` reports how many
+                   rows existed before it.
+                   `zc check --json` emits one object:
                    .schema                     integer, bumped on breaking change
                    .machine.{cpu,memory,env,storage,gpus,budget}
                    .machine.gpus[]             name, vendor, vram_bytes (0 for
@@ -40,6 +52,15 @@ zc check
                    verdict is one of good|usable|slow|wont_fit.
                    ttft_s and prefill_tok_s are null until `zc verify` has
                    measured this backend - they are never derived.
+
+zc doctor
+    PRECONDITIONS  none. Same probe and benchmark as `zc check`.
+    SIDE EFFECTS   same as `zc check`.
+    EXIT CODES     0 always.
+    AGENT USAGE    Markdown for a bug report: raw probe readings alongside the
+                   struct derived from them, the full bandwidth-vs-threads
+                   curve, and the fitted coefficients. Carries no hostname,
+                   username, serial, MAC or IP; paths are rewritten to `~`.
 
 zc verify [MODEL] [--runtime NAME]
     PRECONDITIONS  a local runtime that reports its own prefill/decode timings:
@@ -62,6 +83,33 @@ fn main() {
     // Global flags are stripped before dispatch so they may appear anywhere.
     let as_json = take_flag(&mut args, "--json");
     let runtime = take_value(&mut args, "--runtime");
+    let kv = match take_value(&mut args, "--kv") {
+        Some(v) => match zc_model::KvPrecision::parse(&v) {
+            Some(p) => p,
+            None => {
+                eprintln!("unknown --kv value '{v}' (expected f16, q8 or q4)");
+                std::process::exit(2);
+            }
+        },
+        None => zc_model::KvPrecision::DEFAULT,
+    };
+    // Default cut. The catalog is large enough now that printing all of it
+    // buries the models a constrained machine can actually run under the ones
+    // it cannot.
+    const DEFAULT_TOP: usize = 20;
+    // `--all` means both: every quantisation, and no row limit.
+    let show_all = take_flag(&mut args, "--all");
+    let top = match take_value(&mut args, "--top") {
+        Some(v) => match v.parse::<usize>() {
+            Ok(n) if n > 0 => Some(n),
+            _ => {
+                eprintln!("--top needs a positive number, got '{v}'");
+                std::process::exit(2);
+            }
+        },
+        None if show_all => None,
+        None => Some(DEFAULT_TOP),
+    };
     let cmd = args.first().map(String::as_str).unwrap_or("check");
 
     if matches!(cmd, "-h" | "--help" | "help") {
@@ -75,7 +123,7 @@ fn main() {
     if cmd == "gate" {
         std::process::exit(gate_cmd::run());
     }
-    if !matches!(cmd, "check" | "verify") {
+    if !matches!(cmd, "check" | "verify" | "doctor") {
         eprintln!("unknown command '{cmd}'\n\n{HELP}");
         std::process::exit(2);
     }
@@ -98,8 +146,9 @@ fn main() {
     let fit = zc_model::Fit::load(&fit_cmd::path());
 
     let code = match runtime {
-        Some(rt) => verify::run(&m, rt.as_ref(), &fit, args.get(1).map(String::as_str)),
-        None => check::run(&m, &fit, as_json),
+        Some(rt) => verify::run(&m, rt.as_ref(), &fit, kv, args.get(1).map(String::as_str)),
+        None if cmd == "doctor" => doctor::run(&m, &fit, kv),
+        None => check::run(&m, &fit, kv, top, show_all, as_json),
     };
     std::process::exit(code);
 }

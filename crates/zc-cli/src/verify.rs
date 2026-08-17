@@ -71,7 +71,13 @@ pub fn precheck(wanted: Option<&str>) -> Result<Box<dyn Runtime>, i32> {
     Err(2)
 }
 
-pub fn run(m: &Machine, rt: &dyn Runtime, fit: &zc_model::Fit, wanted: Option<&str>) -> i32 {
+pub fn run(
+    m: &Machine,
+    rt: &dyn Runtime,
+    fit: &zc_model::Fit,
+    kv: KvPrecision,
+    wanted: Option<&str>,
+) -> i32 {
     let models = match rt.list() {
         Ok(v) if !v.is_empty() => v,
         Ok(_) => {
@@ -87,9 +93,6 @@ pub fn run(m: &Machine, rt: &dyn Runtime, fit: &zc_model::Fit, wanted: Option<&s
         }
     };
 
-    // Default to the smallest model: it is the fastest to measure and the most
-    // likely to fit, and a first run that takes ten minutes is a first run
-    // nobody finishes.
     let chosen = match wanted {
         Some(name) => match models.iter().find(|m| m.name.starts_with(name)) {
             Some(m) => m,
@@ -162,9 +165,11 @@ pub fn run(m: &Machine, rt: &dyn Runtime, fit: &zc_model::Fit, wanted: Option<&s
         }
     );
 
-    let pred = predict::predict_with(
-        &spec, quant, &m.hw, KvPrecision::Q8, PROMPT_TOKENS, 512, fit,
-    );
+    // The same KV precision `zc check` predicted with. If it does not match
+    // what the runtime is actually configured for, `implied_eta` absorbs a
+    // memory-model error that has nothing to do with the machine — pass `--kv`
+    // to match a non-default setup.
+    let pred = predict::predict_with(&spec, quant, &m.hw, kv, PROMPT_TOKENS, 512, fit);
 
     // A cold model would charge load time to the first tokens and understate
     // the rate. Ollama reports load_duration separately, but warming also
@@ -253,6 +258,7 @@ pub fn run(m: &Machine, rt: &dyn Runtime, fit: &zc_model::Fit, wanted: Option<&s
         m.hw.disk_gbs,
         m.hw.gflops,
         m.hw.threads,
+        kv.tag(),
         // What the runtime actually ran with, not what we asked for: llama.cpp
         // and LM Studio fix context outside the request and ignore ours.
         run.n_ctx.unwrap_or(NUM_CTX),
