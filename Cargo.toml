@@ -6,7 +6,7 @@ members = ["crates/*"]
 version = "0.1.0"
 edition = "2024"
 license = "Apache-2.0"
-repository = "https://github.com/zerocloud/zerocloud"
+repository = "https://github.com/DEEPESH-845/ZeroCloud"
 
 # Dependencies declared once here, inherited by member crates with
 # `libc.workspace = true`. Keeps versions consistent across the workspace.

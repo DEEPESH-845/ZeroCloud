@@ -1,0 +1,129 @@
+# Tag -> five binaries + checksums on a GitHub release.
+#
+# Deliberately triggered by `push: tags` and tagged by hand. release-please tags
+# using GITHUB_TOKEN, and tags pushed with that token do not trigger downstream
+# workflows -- the documented way to ship a release with no assets attached.
+# Hand-tagging avoids that whole class of problem until there is a reason to
+# automate versioning.
+#
+# This pipeline exists before the Phase 0 gate campaign rather than after it, so
+# that every calibration record is produced by the exact artifact users download
+# and GitHub's native runners replace local cross-compilation entirely.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+# Least privilege, but `contents: write` is unavoidable here: creating a release
+# and attaching assets to it is a write to repository contents.
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # The release has to exist before any matrix job can upload to it, and five
+  # parallel jobs racing to create it would collide.
+  create:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: create the release if it does not exist
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "${{ github.ref_name }}" >/dev/null 2>&1; then
+            echo "release already exists"
+            exit 0
+          fi
+          # Any tag carrying a hyphen (v0.1.0-rc1) is a prerelease.
+          case "${{ github.ref_name }}" in
+            *-*) pre=--prerelease ;;
+            *)   pre= ;;
+          esac
+          gh release create "${{ github.ref_name }}" \
+            --title "${{ github.ref_name }}" \
+            --generate-notes --verify-tag $pre
+
+  build:
+    needs: create
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+          - target: x86_64-apple-darwin
+            os: macos-latest
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    # Git Bash on the Windows runner, so one script covers all three platforms.
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      # x86_64 musl links with the packaged musl-gcc. The runner image has no
+      # packaged aarch64 cross-musl-gcc, so that target links with rust-lld
+      # instead -- which works here only because nothing in this workspace
+      # compiles C: `libc` is FFI declarations, not a C build.
+      - name: musl linker
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: build
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: rust-lld
+        run: cargo build --release --target ${{ matrix.target }} --bin zc
+
+      # `strip = true` is already set in [profile.release], so the binary
+      # arrives stripped and no separate step is needed.
+      - name: package
+        run: |
+          set -eu
+          if [ "${{ runner.os }}" = "Windows" ]; then ext=".exe"; else ext=""; fi
+          out="zc-${{ matrix.target }}${ext}"
+          cp "target/${{ matrix.target }}/release/zc${ext}" "$out"
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "$out" > "$out.sha256"
+          else
+            shasum -a 256 "$out" > "$out.sha256"
+          fi
+          cat "$out.sha256"
+
+      # A binary that cannot emit its own report is not shippable, and this is
+      # the only place the Linux and Windows probe paths run before a human
+      # takes the binary to real hardware. aarch64-linux cannot execute on an
+      # x86_64 runner, so it is covered by the field campaign instead.
+      - name: smoke test
+        if: matrix.target != 'aarch64-unknown-linux-musl'
+        run: |
+          set -eu
+          if [ "${{ runner.os }}" = "Windows" ]; then ext=".exe"; else ext=""; fi
+          ./"zc-${{ matrix.target }}${ext}" check --json --top 3 | python3 -m json.tool > /dev/null
+          echo "json parses"
+
+      - name: upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.ref_name }}" zc-${{ matrix.target }}* --clobber
