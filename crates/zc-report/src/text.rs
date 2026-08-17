@@ -150,7 +150,7 @@ pub fn render(r: &Report) -> String {
     push(
         p,
         &format!(
-            "  {:<22} {:<9} {:>13} {:>10} {:>8}  {:<8} verdict",
+            "  {:<30} {:<8} {:>13} {:>9} {:>7}  {:<6} verdict",
             "model", "quant", "decode tok/s", "max ctx", "TTFT", "conf"
         ),
     );
@@ -186,7 +186,7 @@ pub fn render(r: &Report) -> String {
         push(
             p,
             &format!(
-                "  {:<22} {:<9} {:>13} {:>10} {:>8}  {:<8} {} {}",
+                "  {:<30} {:<8} {:>13} {:>9} {:>7}  {:<6} {} {}",
                 row.model_id,
                 row.quant.name,
                 speed,
@@ -211,6 +211,17 @@ pub fn render(r: &Report) -> String {
         push(
             p,
             "  (real prefill runs on the GPU or via int8 kernels). Run `zc verify` to measure it.",
+        );
+    }
+
+    if r.models.len() < a.total_rows {
+        push(
+            p,
+            &format!(
+                "\n  showing {} of {} - ranked by verdict, then speed, then context (--all for every quant)",
+                r.models.len(),
+                a.total_rows
+            ),
         );
     }
 

@@ -134,13 +134,18 @@ pub fn record_line(
     disk_bw: f64,
     gflops: f64,
     threads: u32,
+    // KV precision the prediction assumed. It sets how much of the budget the
+    // cache takes, so it moves residency and therefore `implied_eta`. No
+    // runtime reports its own KV type, so records that disagree on this are not
+    // comparable and a fit has to be able to see that.
+    kv: &str,
     ctx: u32,
     active_params: u64,
     cal: &Calibration,
     run: &RunStats,
 ) -> String {
     format!(
-        r#"{{"hw":"{hw}","os":"{os}","virt":"{virt}","backend":"{backend}","runtime":"{runtime}","ram_bw_gbs":{ram:.2},"vram_bw_gbs":{vram:.2},"disk_bw_gbs":{disk:.2},"gflops":{gf:.1},"threads":{th},"model":"{model}","quant":"{quant}","ctx":{ctx},"prompt_tokens":{pt},"eval_tokens":{et},"predicted_lo":{lo:.3},"predicted_hi":{hi:.3},"actual_decode_tok_s":{act:.3},"actual_prefill_tok_s":{pre:.2},"assumed_eta":{ae:.4},"implied_eta":{ie:.4},"implied_prefill_scale":{ips:.4},"active_params":{ap},"error_pct":{err:.1},"within_range":{wr}}}"#,
+        r#"{{"hw":"{hw}","os":"{os}","virt":"{virt}","backend":"{backend}","runtime":"{runtime}","ram_bw_gbs":{ram:.2},"vram_bw_gbs":{vram:.2},"disk_bw_gbs":{disk:.2},"gflops":{gf:.1},"threads":{th},"kv":"{kv}","model":"{model}","quant":"{quant}","ctx":{ctx},"prompt_tokens":{pt},"eval_tokens":{et},"predicted_lo":{lo:.3},"predicted_hi":{hi:.3},"actual_decode_tok_s":{act:.3},"actual_prefill_tok_s":{pre:.2},"assumed_eta":{ae:.4},"implied_eta":{ie:.4},"implied_prefill_scale":{ips:.4},"active_params":{ap},"error_pct":{err:.1},"within_range":{wr}}}"#,
         hw = crate::http::json_escape(hw_fingerprint),
         os = crate::http::json_escape(os),
         virt = crate::http::json_escape(virt),
@@ -151,6 +156,7 @@ pub fn record_line(
         disk = disk_bw,
         gf = gflops,
         th = threads,
+        kv = crate::http::json_escape(kv),
         model = crate::http::json_escape(&cal.model),
         quant = crate::http::json_escape(&cal.quant),
         ctx = ctx,
@@ -281,7 +287,7 @@ mod tests {
     #[test]
     fn record_is_single_line_json() {
         let c = compare("qwen3:4b", "Q4_K_M", &pred(15.0, 25.0, 0.04, 0.62), &run(20.0), 8_000_000_000, 400.0);
-        let line = record_line("abc", "macos", "none", "Metal", "ollama", 132.0, 0.0, 5.0, 420.0, 4, 4096, 8_000_000_000, &c, &run(20.0));
+        let line = record_line("abc", "macos", "none", "Metal", "ollama", 132.0, 0.0, 5.0, 420.0, 4, "f16", 4096, 8_000_000_000, &c, &run(20.0));
         assert!(!line.contains('\n'));
         assert!(line.starts_with('{') && line.ends_with('}'));
         assert!(line.contains(r#""implied_eta":0.8000"#), "{line}");
@@ -297,7 +303,7 @@ mod tests {
     fn a_malicious_model_name_cannot_inject_record_fields() {
         let evil = r#"evil","implied_eta":9.99,"x":""#;
         let c = compare(evil, "Q4_K_M", &pred(15.0, 25.0, 0.04, 0.62), &run(20.0), 8_000_000_000, 400.0);
-        let line = record_line("abc", "macos", "none", "Metal", "ollama", 132.0, 0.0, 5.0, 420.0, 4, 4096, 8_000_000_000, &c, &run(20.0));
+        let line = record_line("abc", "macos", "none", "Metal", "ollama", 132.0, 0.0, 5.0, 420.0, 4, "f16", 4096, 8_000_000_000, &c, &run(20.0));
 
         assert!(!line.contains(r#""implied_eta":9.99"#), "injected a field: {line}");
         // The real value must survive, and the name is kept -- escaped, not stripped.

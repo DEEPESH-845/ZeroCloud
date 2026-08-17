@@ -284,7 +284,7 @@ fn calibration_inverts_a_measured_run_and_records_the_runtime() {
     assert!((cal.implied_eta - 0.7018).abs() < 1e-3, "{}", cal.implied_eta);
 
     let line = zc_runtime::calibrate::record_line(
-        "deadbeef", "macos", "none", "Metal", rt.name(), 132.0, 0.0, 5.0, 420.0, 4, 4096,
+        "deadbeef", "macos", "none", "Metal", rt.name(), 132.0, 0.0, 5.0, 420.0, 4, "f16", 4096,
         4_022_468_096, &cal, &run,
     );
     assert!(!line.contains('\n'));
