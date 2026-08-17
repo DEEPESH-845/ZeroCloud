@@ -23,4 +23,21 @@ for t in "${TARGETS[@]}"; do
   fi
 done
 
+echo "== installer =="
+sh -n install.sh
+# Offline: ZC_VERSION skips the network tag lookup, so this exercises target
+# detection and URL construction without needing a published release. The asset
+# names here must match .github/workflows/release.yml exactly -- a mismatch
+# means every `curl | sh` 404s, and nothing else would catch it.
+case "$(uname -s)/$(uname -m)" in
+  Darwin/arm64)  want=aarch64-apple-darwin ;;
+  Darwin/x86_64) want=x86_64-apple-darwin ;;
+  Linux/x86_64)  want=x86_64-unknown-linux-musl ;;
+  Linux/aarch64) want=aarch64-unknown-linux-musl ;;
+  *)             want=UNSUPPORTED ;;
+esac
+ZC_VERSION=v0.0.0 ZC_DRY_RUN=1 sh install.sh | grep -q "zc-$want" \
+  || { echo "installer resolved the wrong target (expected zc-$want)"; exit 1; }
+echo "resolves zc-$want"
+
 echo "OK"
