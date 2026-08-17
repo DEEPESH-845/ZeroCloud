@@ -73,10 +73,16 @@ not five of the same laptop:
 
        ollama pull qwen3:1.7b
 
-   `qwen3:1.7b` (~1.4 GB) is the common anchor across all machines, so the fit
-   buckets have one model measured everywhere. Then measure whatever else is
-   already installed locally — more models per machine is free evidence, and
-   buckets need 8 runs to reach medium confidence and 30 to reach high.
+   `qwen3:1.7b` (~1.4 GB) is a useful common anchor: one model measured on every
+   machine makes cross-machine comparison apples-to-apples and exposes any error
+   specific to one model.
+
+   It is a convenience, not a requirement. `zc fit` buckets on
+   `backend × quant_family`, not on model, so **measuring different models on
+   different machines adds evidence rather than fragmenting it** — that is also
+   why `calibrate.yml` defaults to the smaller `llama3.2:1b` on CI and is left
+   that way. Measure whatever each machine already has: buckets need 8 runs for
+   medium confidence and 30 for high, and every extra run counts.
 
 5. **Measure.**
 
