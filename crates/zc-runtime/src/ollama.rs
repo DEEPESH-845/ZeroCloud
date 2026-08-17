@@ -187,6 +187,11 @@ pub fn parse_show(s: &str, model: &InstalledModel) -> Option<ModelSpec> {
         params: params.max(1),
         attention,
         moe,
+        // GGUF states the trained context; a model may not be asked for more
+        // than it was trained on however much memory is free.
+        n_ctx_train: json::number_by_suffix(s, ".context_length")
+            .map(|v| v as u32)
+            .filter(|&v| v > 0),
         quants: vec![Quant {
             name: model.quant.clone(),
             bytes: model.size_bytes,
