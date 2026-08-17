@@ -55,6 +55,36 @@ impl Machine {
     }
 }
 
+/// Which backend the runtime will actually use.
+///
+/// Apple Silicon runtimes default to Metal, and on unified memory the GPU
+/// reaches close to the all-core peak — well above what the CPU cluster alone
+/// sustains, so predicting Metal from a CPU figure understates badly.
+///
+/// But unified memory alone is not evidence of a GPU. `mem.unified` is
+/// `cfg!(target_arch = "aarch64")` — a compile-time constant — so every
+/// virtualized Apple Silicon machine claimed it, and with no macOS GPU probe
+/// there was nothing to contradict them. A GitHub macOS runner was predicted at
+/// 27-45 tok/s and measured 3.9: an 822% error, the worst in the calibration
+/// set. Metal now requires an adapter that reports shader cores.
+///
+/// Erring toward `Cpu` is the safe direction. Predicting CPU speed on a machine
+/// that turns out to have a GPU understates it, which calibration corrects; the
+/// reverse promises speed that never arrives.
+fn select_backend(has_discrete_card: bool, unified: bool, gpus: &[gpu::Gpu]) -> Backend {
+    if has_discrete_card {
+        return Backend::Discrete;
+    }
+    let apple_gpu = gpus
+        .iter()
+        .any(|g| g.vendor == gpu::Vendor::Apple && g.usable_for_compute());
+    if unified && apple_gpu {
+        Backend::Metal
+    } else {
+        Backend::Cpu
+    }
+}
+
 pub fn probe() -> Machine {
     let mem = memory::probe();
     let cpu = cpu::probe();
@@ -83,14 +113,7 @@ pub fn probe() -> Machine {
         .filter(|g| !g.integrated && g.vram_bytes >= MIN_DISCRETE_VRAM)
         .max_by_key(|g| g.vram_bytes);
 
-    // Apple Silicon runtimes default to Metal, and on unified memory the GPU
-    // reaches close to the all-core peak — well above what the CPU cluster
-    // alone sustains. Predicting Metal from a CPU figure understates badly.
-    let backend = match card {
-        Some(_) => Backend::Discrete,
-        None if mem.unified => Backend::Metal,
-        None => Backend::Cpu,
-    };
+    let backend = select_backend(card.is_some(), mem.unified, &gpus);
     let ram_infer = ram
         .by_threads
         .iter()
@@ -133,5 +156,52 @@ pub fn probe() -> Machine {
         backend,
         budget_idle,
         budget_now,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::select_backend;
+    use zc_model::Backend;
+    use zc_probe::gpu::Gpu;
+
+    fn apple(cores: Option<u32>) -> Gpu {
+        let mut g = Gpu::new("Apple M5".into(), 0, "test");
+        g.cores = cores;
+        g
+    }
+
+    /// Real silicon: unified memory plus an adapter reporting shader cores.
+    #[test]
+    fn a_real_apple_gpu_selects_metal() {
+        assert_eq!(
+            select_backend(false, true, &[apple(Some(10))]),
+            Backend::Metal
+        );
+    }
+
+    /// Regression for calibration record `cf62d6b5590582da`.
+    ///
+    /// A virtualized Mac reports unified memory — `mem.unified` is
+    /// `cfg!(target_arch = "aarch64")`, so it cannot report anything else — and
+    /// presents a paravirtual adapter with no shader cores. Predicting Metal
+    /// there gave 27-45 tok/s against 3.9 measured, an 822% error.
+    #[test]
+    fn unified_memory_without_a_usable_gpu_is_a_cpu_machine() {
+        assert_eq!(select_backend(false, true, &[apple(None)]), Backend::Cpu);
+    }
+
+    /// The probe failing entirely must not be read as "GPU present".
+    #[test]
+    fn no_adapters_at_all_is_a_cpu_machine() {
+        assert_eq!(select_backend(false, true, &[]), Backend::Cpu);
+    }
+
+    /// A discrete card outranks everything: it was found through a driver that
+    /// would not have answered if the card were not real.
+    #[test]
+    fn a_discrete_card_wins_regardless() {
+        assert_eq!(select_backend(true, true, &[apple(None)]), Backend::Discrete);
+        assert_eq!(select_backend(true, false, &[]), Backend::Discrete);
     }
 }

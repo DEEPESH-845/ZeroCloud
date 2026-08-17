@@ -138,6 +138,22 @@ pub fn render(r: &Report) -> String {
             "  VRAM bandwidth is a table lookup, not a measurement - confidence is capped at 'low'",
         );
     }
+    // Unified memory normally means Metal. When it does not, say so unprompted:
+    // a Mac user reading "Cpu backend" would otherwise assume a bug, and the
+    // difference between the two is roughly an order of magnitude.
+    if r.mem.unified && r.backend == Backend::Cpu {
+        let saw_adapter = r.gpus.iter().any(|g| g.vendor == zc_probe::gpu::Vendor::Apple);
+        push(
+            p,
+            if saw_adapter {
+                "  a GPU was found but reports no shader cores (a VM's paravirtual\n  \
+                 adapter), so this predicts CPU decode rather than Metal"
+            } else {
+                "  no GPU could be verified, so this predicts CPU decode rather than\n  \
+                 Metal - run `zc doctor` to see what was probed"
+            },
+        );
+    }
     if a.idle_machine {
         push(p, "  assumes an otherwise-idle machine");
     }

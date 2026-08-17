@@ -59,6 +59,14 @@ pub struct Gpu {
     pub source: &'static str,
     /// Peak memory bandwidth, GB/s. **Looked up** from [`bandwidth_gbs`].
     pub bw_gbs: f64,
+    /// Shader core count, when the platform reports one. `None` means unknown,
+    /// never zero.
+    ///
+    /// Load-bearing on macOS, where it is the only signal separating a real
+    /// Apple GPU from a VM's paravirtual adapter: both identify as
+    /// `Vendor: Apple (0x106b)` with Metal support, and only the real one
+    /// reports how many cores it has. See [`Gpu::usable_for_compute`].
+    pub cores: Option<u32>,
 }
 
 impl Gpu {
@@ -78,6 +86,27 @@ impl Gpu {
             count: 1,
             source,
             name,
+            cores: None,
+        }
+    }
+
+    /// Whether this adapter can be relied on to actually run inference.
+    ///
+    /// Only meaningful for Apple parts today, and deliberately conservative:
+    /// a macOS VM presents an "Apple Paravirtual device" that advertises Metal
+    /// but has no shader cores behind it. Trusting the advertisement predicted
+    /// 27-45 tok/s on a GitHub macOS runner that measured 3.9 — an 822% error,
+    /// the worst single miss in the calibration set (record `cf62d6b5590582da`).
+    ///
+    /// A core count is reported by real silicon and by nothing else, so it is
+    /// the gate. Unknown means unusable: claiming GPU speed we cannot
+    /// substantiate is the one direction this codebase never errs in.
+    pub fn usable_for_compute(&self) -> bool {
+        match self.vendor {
+            Vendor::Apple => self.cores.is_some(),
+            // Every other vendor is discovered through a driver interface that
+            // would not have answered at all if the card were not real.
+            _ => true,
         }
     }
 }
@@ -252,7 +281,7 @@ fn group(gpus: Vec<Gpu>) -> Vec<Gpu> {
 ///
 /// nvidia-smi routinely hangs for tens of seconds against a wedged driver, and
 /// a hardware prober that never returns is worse than one that reports no GPU.
-#[cfg(any(target_os = "linux", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
 const CMD_TIMEOUT_S: u64 = 4;
 
 /// Run a command, or `None` if it is missing, fails, or takes too long.
@@ -261,7 +290,7 @@ const CMD_TIMEOUT_S: u64 = 4;
 /// child exits on its own — `std::process` has no portable kill-on-timeout and
 /// `zc` is about to exit anyway. Revisit if `zc serve` ever polls this in a
 /// long-lived process.
-#[cfg(any(target_os = "linux", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
 fn run(prog: &str, args: &[&str]) -> Option<String> {
     use std::process::{Command, Stdio};
     let (tx, rx) = std::sync::mpsc::channel();
@@ -330,16 +359,51 @@ fn nvidia() -> Vec<Gpu> {
 
 #[cfg(target_os = "macos")]
 mod imp {
-    use super::Gpu;
+    use super::{run, Gpu};
 
-    /// Apple Silicon has no discrete GPU and its integrated one shares the RAM
-    /// already reported by `memory.rs` (`unified: true`), which is what selects
-    /// the Metal backend. Shelling out to `system_profiler` costs 1-2 seconds
-    /// to learn nothing the prediction uses.
+    /// This used to return nothing, on the reasoning that `system_profiler`
+    /// "costs 1-2 seconds to learn nothing the prediction uses". A calibration
+    /// record disproved that sentence: with no GPU probe, `machine.rs` selected
+    /// the Metal backend from `mem.unified` alone — and `unified` is
+    /// `cfg!(target_arch = "aarch64")`, a compile-time constant. Every
+    /// virtualized Apple Silicon machine was therefore predicted as a GPU
+    /// machine. On a GitHub macOS runner that meant 27-45 tok/s predicted
+    /// against 3.9 measured.
     ///
-    /// Intel Macs with a discrete AMD card are not detected yet.
+    /// 1-2 seconds against a ~20 s benchmark is noise; an 822% error is not.
+    ///
+    /// Intel Macs with a discrete AMD card are still not detected: on those
+    /// `unified` is false, so they already take the CPU path and this changes
+    /// nothing for them.
     pub fn detect() -> Vec<Gpu> {
-        Vec::new()
+        match run("system_profiler", &["SPDisplaysDataType"]) {
+            Some(out) => parse(&out),
+            None => Vec::new(),
+        }
+    }
+
+    /// Pull one entry per `Chipset Model:` out of `system_profiler` text.
+    ///
+    /// Text rather than `-json`: `zc-probe` is dependency-free by policy, the
+    /// rest of this module already parses `nvidia-smi` and `lspci` output the
+    /// same way, and the two fields needed are on their own lines.
+    pub(super) fn parse(out: &str) -> Vec<Gpu> {
+        let mut gpus: Vec<Gpu> = Vec::new();
+        for line in out.lines() {
+            let line = line.trim();
+            if let Some(name) = line.strip_prefix("Chipset Model:") {
+                // Apple parts share the system pool, so 0 VRAM is correct here
+                // and `Gpu::new` enforces it for anything integrated anyway.
+                gpus.push(Gpu::new(name.trim().to_string(), 0, "system_profiler"));
+            } else if let Some(n) = line.strip_prefix("Total Number of Cores:") {
+                // Belongs to the most recent chipset block. Absent entirely on
+                // a paravirtual adapter, which is the whole point.
+                if let (Some(g), Ok(n)) = (gpus.last_mut(), n.trim().parse::<u32>()) {
+                    g.cores = Some(n);
+                }
+            }
+        }
+        gpus
     }
 }
 
@@ -506,6 +570,76 @@ mod imp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Verbatim `system_profiler SPDisplaysDataType` from a real M5 laptop.
+    #[cfg(target_os = "macos")]
+    const REAL_M5: &str = "\
+Graphics/Displays:
+
+    Apple M5:
+
+      Chipset Model: Apple M5
+      Type: GPU
+      Bus: Built-In
+      Total Number of Cores: 10
+      Vendor: Apple (0x106b)
+      Metal Support: Metal 4
+";
+
+    /// A macOS VM's adapter. Note it claims the same Apple vendor id and
+    /// advertises Metal — only the core count is missing.
+    #[cfg(target_os = "macos")]
+    const PARAVIRTUAL: &str = "\
+Graphics/Displays:
+
+    Apple Paravirtual device:
+
+      Chipset Model: Apple Paravirtual device
+      Type: GPU
+      Bus: Built-In
+      Vendor: Apple (0x106b)
+      Metal Support: Metal 3
+";
+
+    /// Real silicon reports its shader cores, so it may drive the Metal path.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_real_apple_gpu_reports_cores_and_is_usable() {
+        let g = super::imp::parse(REAL_M5);
+        assert_eq!(g.len(), 1);
+        assert_eq!(g[0].name, "Apple M5");
+        assert_eq!(g[0].vendor, Vendor::Apple);
+        assert_eq!(g[0].cores, Some(10));
+        assert!(g[0].usable_for_compute());
+    }
+
+    /// Locks in calibration record `cf62d6b5590582da`: a GitHub macOS runner
+    /// predicted 27-45 tok/s and measured 3.9, an 822% error, because nothing
+    /// probed the GPU and `mem.unified` is a compile-time constant on aarch64.
+    ///
+    /// The paravirtual adapter is still *listed* — `zc doctor` should show what
+    /// was seen — but it must not be usable for compute.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_paravirtual_adapter_advertises_metal_but_is_not_usable() {
+        let g = super::imp::parse(PARAVIRTUAL);
+        assert_eq!(g.len(), 1);
+        assert_eq!(g[0].vendor, Vendor::Apple, "it does claim to be Apple");
+        assert_eq!(g[0].cores, None, "and reports no shader cores");
+        assert!(
+            !g[0].usable_for_compute(),
+            "an adapter with no cores must not select the Metal backend"
+        );
+    }
+
+    /// A machine where `system_profiler` fails or returns nothing must yield no
+    /// adapters rather than a default one.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn empty_output_yields_no_adapters() {
+        assert!(super::imp::parse("").is_empty());
+        assert!(super::imp::parse("Graphics/Displays:\n").is_empty());
+    }
 
     /// The classification that decides whether a machine is predicted at GPU
     /// speed or CPU speed. Each of these names is one that a naive rule gets
