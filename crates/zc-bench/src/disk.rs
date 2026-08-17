@@ -130,8 +130,8 @@ fn open_uncached(path: &Path) -> io::Result<(File, bool)> {
             .custom_flags(libc::O_DIRECT)
             .open(path)
         {
-            Ok(f) => return Ok((f, true)),
-            Err(_) => return Ok((File::open(path)?, false)),
+            Ok(f) => Ok((f, true)),
+            Err(_) => Ok((File::open(path)?, false)),
         }
     }
     #[cfg(target_os = "macos")]
@@ -162,9 +162,9 @@ fn open_uncached(path: &Path) -> io::Result<(File, bool)> {
             .custom_flags(FILE_FLAG_NO_BUFFERING)
             .open(path)
         {
-            Ok(f) => return Ok((f, true)),
+            Ok(f) => Ok((f, true)),
             // Some filesystems refuse it; fall back rather than fail the probe.
-            Err(_) => return Ok((File::open(path)?, false)),
+            Err(_) => Ok((File::open(path)?, false)),
         }
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
