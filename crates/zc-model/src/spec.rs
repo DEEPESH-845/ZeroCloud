@@ -148,6 +148,17 @@ pub struct ModelSpec {
     pub params: u64,
     pub attention: Attention,
     pub moe: Option<Moe>,
+    /// Context the model was trained for, when it says so.
+    ///
+    /// A memory budget is not the only limit on context, and for a
+    /// sliding-window model it stops being the binding one: once the window
+    /// fills, KV stops growing, so the arithmetic happily reports a context far
+    /// past anything the model was trained on. Ministral's 32K window on a 16 GB
+    /// machine came out at 1024K, which is not a number anyone can use.
+    ///
+    /// `None` means the model did not state it, and then the memory limit is
+    /// genuinely all we know.
+    pub n_ctx_train: Option<u32>,
     pub quants: Vec<Quant>,
 }
 

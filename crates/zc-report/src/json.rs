@@ -156,7 +156,7 @@ pub fn render(r: &Report) -> String {
     o.push_str(&format!(
         "\"assumptions\":{{\"backend\":{},\"ram_bw_gbs\":{},\"vram_bytes\":{},\"vram_bw_gbs\":{},\
          \"vram_bw_measured\":false,\"disk_gbs\":{},\"kv_precision\":{},\
-         \"prompt_tokens\":{},\"ubatch\":{},\"idle_machine\":{},\"uncalibrated\":{},\"prefill_unmeasured\":{}}},",
+         \"prompt_tokens\":{},\"ubatch\":{},\"idle_machine\":{},\"uncalibrated\":{},\"prefill_unmeasured\":{},\"total_rows\":{}}},",
         st(backend_tag(r.backend)),
         num(r.ram_bw_gbs),
         r.vram_bytes,
@@ -168,6 +168,7 @@ pub fn render(r: &Report) -> String {
         a.idle_machine,
         a.uncalibrated,
         a.prefill_unmeasured,
+        a.total_rows,
     ));
 
     // -- models -------------------------------------------------------------
