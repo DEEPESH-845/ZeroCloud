@@ -819,20 +819,41 @@ git commit -m "docs: add the Phase 0 gate runbook
 Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 ```
 
-- [ ] **Step 3: Run the campaign on machines 2–5**
+- [ ] **Step 3: Harvest the three CI machines already being measured**
 
-Follow `docs/gate-runbook.md` on each. This is physical work: four machines, one
-install, one doctor bundle, one runtime, one ~1.4 GB model pull, and one or more
-`zc verify` runs each.
+`.github/workflows/calibrate.yml` already runs `zc verify` on ubuntu-latest,
+macos-latest and windows-latest, merges the three records, and uploads them as
+the `calibration-merged` artifact — it simply never commits them. Those are three
+distinct machines the gate can count. They are VMs, so they can never satisfy
+`MIN_BARE_METAL`, which is precisely why that floor exists.
 
-- [ ] **Step 4: Merge the records**
+```bash
+gh workflow run calibrate.yml
+gh run watch
+gh run download -n calibration-merged -D /tmp/ci-records
+cat /tmp/ci-records/all.jsonl >> data/calibration/gate.jsonl
+```
+
+This reduces the physical campaign's *minimum* to one more bare-metal machine.
+Run the full spread anyway where hardware is available: a gate that squeaks green
+on three cloud VMs and two laptops is weaker evidence than five real machines,
+and the extra records cost only time.
+
+- [ ] **Step 4: Run the campaign on the remaining physical machines**
+
+Follow `docs/gate-runbook.md` on each. Physical work: one install, one doctor
+bundle, one runtime, one ~1.4 GB model pull, and one or more `zc verify` runs per
+machine. **At least one more bare-metal machine is mandatory** — `MIN_BARE_METAL`
+is 2 and this Mac is currently the only one.
+
+- [ ] **Step 5: Merge the records**
 
 ```bash
 cat /path/to/machine-N/local.jsonl >> data/calibration/gate.jsonl
 cp /path/to/machine-N/doctor-*.md docs/doctor-bundles/
 ```
 
-- [ ] **Step 5: Refit and read the gate**
+- [ ] **Step 6: Refit and read the gate**
 
 ```bash
 cargo run --release --bin zc -- fit
@@ -841,14 +862,14 @@ cargo run --release --bin zc -- gate; echo "exit: $?"
 
 Expected: `exit: 0`, ≥5 machines, ≥2 bare-metal, median below 25%.
 
-- [ ] **Step 6: If `within_range` is low, stop and treat it as physics**
+- [ ] **Step 7: If `within_range` is low, stop and treat it as physics**
 
 Do not proceed to the README. Widening the published range is a change to the
 coverage factor or the confidence tiers in `crates/zc-model/src/fit.rs`, it needs
 its own hand-computed test in the house style, and it is out of this plan's
 scope — bring the numbers back for a design decision.
 
-- [ ] **Step 7: Commit the dataset**
+- [ ] **Step 8: Commit the dataset**
 
 ```bash
 git add data/calibration/gate.jsonl docs/doctor-bundles
