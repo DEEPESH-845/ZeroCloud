@@ -266,7 +266,7 @@ pub fn run(
         &cal,
         &run,
     );
-    let path = crate::fit_cmd::path();
+    let path = crate::fit_cmd::record_path();
     match calibrate::append(&path, &line) {
         Ok(()) => println!("\n  recorded to {}  (local only; `zc share` to submit)", path.display()),
         Err(e) => eprintln!("\n  could not write {}: {e}", path.display()),
