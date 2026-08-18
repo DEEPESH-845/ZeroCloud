@@ -22,6 +22,18 @@ latest_tag() {
         "https://github.com/$REPO/releases/latest" | sed 's#.*/tag/##'
 }
 
+# GitHub's /releases/latest ignores prereleases. With only prereleases
+# published it redirects to /releases, which has no /tag/ segment, so the sed
+# above passes the whole URL through -- non-empty, so an existence check does
+# not catch it, and the download then 404s against a URL with an https:// in
+# the middle of it. A tag has no slashes.
+valid_tag() {
+    case "$1" in
+        ""|*/*|*" "*) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
 # uname -> release target triple. Fails loudly rather than guessing: installing
 # the wrong architecture produces a confusing exec-format error much later.
 target() {
@@ -84,7 +96,12 @@ install_to() {
 
 tgt=$(target)
 tag=${ZC_VERSION:-$(latest_tag)}
-[ -n "$tag" ] || die "could not resolve the latest release tag"
+valid_tag "$tag" || die "no published release yet.
+
+    Prereleases are not served by /releases/latest. If one is what you want,
+    pick its tag from https://github.com/$REPO/releases and rerun:
+
+        ZC_VERSION=<tag> curl -fsSL .../install.sh | sh"
 case "$tgt" in *windows*) ext=".exe" ;; *) ext="" ;; esac
 url="https://github.com/$REPO/releases/download/$tag/$BIN-$tgt$ext"
 
