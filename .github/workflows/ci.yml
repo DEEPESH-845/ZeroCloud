@@ -1,0 +1,70 @@
+# Tests and lints on every push and pull request.
+#
+# This exists so a contributor's first PR gets an answer from CI rather than
+# from a maintainer, which is the difference between a project that accepts
+# outside patches and one that only looks like it does.
+#
+# Native runners per OS rather than cross-compilation: the interesting bugs in
+# this codebase live in `#[cfg(target_os = ...)]` blocks in disk.rs, cpu.rs and
+# gpu.rs, and those only *run* on their own OS. `check.sh` covers the
+# cross-compile angle locally; this covers the angle it cannot.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup component add clippy
+      - run: cargo test --workspace
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+
+  # The catalog and the calibration dataset are the community contribution
+  # surface, so a malformed file from a first-time contributor must fail here
+  # rather than in someone's binary. Both are compiled in, so `build` parses
+  # them; `fit` and `gate` then prove they are readable end to end.
+  data:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo build --release
+      # `gate` exits non-zero until Phase 0 passes, which is a status and not a
+      # CI failure -- but it must still run without erroring, and printing it
+      # here keeps the number in the README auditable on every commit.
+      - run: ./target/release/zc fit && (./target/release/zc gate || true)
+
+  # `install.sh` is the path most users take and nothing else tests it. The
+  # asset names it builds must match release.yml exactly; a mismatch means
+  # every `curl | sh` 404s and no other job would notice.
+  installer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - run: sh -n install.sh
+      - name: resolves this platform's asset name
+        run: |
+          ZC_VERSION=v0.0.0 ZC_DRY_RUN=1 sh install.sh \
+            | grep -q 'zc-x86_64-unknown-linux-musl'
