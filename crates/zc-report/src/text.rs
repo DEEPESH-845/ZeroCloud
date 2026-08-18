@@ -24,7 +24,7 @@ pub fn render(r: &Report) -> String {
     push(
         p,
         &format!(
-            "  {} on {} ({:?}){}",
+            "  {} on {} ({}){}",
             r.storage.mount.display(),
             r.storage.fstype,
             r.storage.medium,
@@ -126,8 +126,8 @@ pub fn render(r: &Report) -> String {
     push(
         p,
         &format!(
-            "\n== predictions ==  ({:?} backend, {bw}, KV at {}, {}-token prompt)",
-            r.backend,
+            "\n== predictions ==  ({} backend, {bw}, KV at {}, {}-token prompt)",
+            backend_label(r.backend),
             a.kv_precision.to_uppercase(),
             a.prompt_tokens
         ),
@@ -166,18 +166,18 @@ pub fn render(r: &Report) -> String {
     push(
         p,
         &format!(
-            "  {:<30} {:<8} {:>13} {:>9} {:>7}  {:<6} verdict",
-            "model", "quant", "decode tok/s", "max ctx", "TTFT", "conf"
+            "  {:<4} {:<28} {:<7} {:>12} {:>7} {:>6}  {:<6}",
+            "", "model", "quant", "decode tok/s", "max ctx", "TTFT", "conf"
         ),
     );
 
     for row in &r.models {
         let pr = &row.prediction;
         let mark = match pr.verdict {
-            Verdict::Good => "OK ",
-            Verdict::Usable => "ok ",
+            Verdict::Good => "OK",
+            Verdict::Usable => "ok",
             Verdict::Slow => "SLOW",
-            Verdict::WontFit => "XX ",
+            Verdict::WontFit => "XX",
         };
         let ctx = if pr.max_context == 0 {
             "-".to_string()
@@ -202,16 +202,20 @@ pub fn render(r: &Report) -> String {
         push(
             p,
             &format!(
-                "  {:<30} {:<8} {:>13} {:>9} {:>7}  {:<6} {} {}",
+                "  {:<4} {:<28} {:<7} {:>12} {:>7} {:>6}  {:<6}{}",
+                mark,
                 row.model_id,
                 row.quant.name,
                 speed,
                 ctx,
                 ttft,
                 pr.confidence.label(),
-                mark,
+                // Appended without a separator so a fully-resident row ends at
+                // the last character it printed. Trailing spaces on every line
+                // break copy-paste out of a terminal and show up as whitespace
+                // diffs in any report a user pastes into an issue.
                 if pr.resident_fraction < 0.999 {
-                    format!("{:.0}% resident", pr.resident_fraction * 100.0)
+                    format!("  {:.0}% resident", pr.resident_fraction * 100.0)
                 } else {
                     String::new()
                 }
@@ -242,7 +246,7 @@ pub fn render(r: &Report) -> String {
     }
 
     for h in &r.storage.hazards {
-        push(p, &format!("\n  !  {h:?}"));
+        push(p, &format!("\n  !  {h}"));
     }
     if let Some(w) = &r.env.warning {
         push(p, &format!("\n  !  {w}"));
@@ -251,7 +255,41 @@ pub fn render(r: &Report) -> String {
     o
 }
 
+/// `{:?}` on `Backend` prints `Cpu`/`Metal`/`Discrete`. The first two read as
+/// typos to a user and the third names an implementation detail rather than the
+/// thing on their desk.
+fn backend_label(b: Backend) -> &'static str {
+    match b {
+        Backend::Cpu => "CPU",
+        Backend::Metal => "Metal",
+        Backend::Discrete => "discrete GPU",
+    }
+}
+
+/// Every line goes through here, so trailing whitespace is stripped in one
+/// place rather than at each of the dozen `{:<width}` columns that can end a
+/// row. Padding after the last visible character breaks copy-paste out of a
+/// terminal and shows up as whitespace noise in any report pasted into an
+/// issue.
 fn push(out: &mut String, line: &str) {
-    out.push_str(line);
+    for (i, l) in line.split('\n').enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        out.push_str(l.trim_end());
+    }
     out.push('\n');
+}
+
+#[cfg(test)]
+mod tests {
+    /// A row whose last column is an empty optional note must not end in the
+    /// padding of the column before it.
+    #[test]
+    fn no_line_ends_in_whitespace() {
+        let mut o = String::new();
+        super::push(&mut o, &format!("  {:<6}{}", "low", ""));
+        super::push(&mut o, "a\n  b   ");
+        assert_eq!(o, "  low\na\n  b\n");
+    }
 }

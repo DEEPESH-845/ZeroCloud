@@ -99,6 +99,7 @@ dependencies = [
 name = "zc-cli"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "zc-bench",
  "zc-model",
  "zc-probe",

@@ -23,3 +23,27 @@ Retired for two reasons:
    in place. It can only be retired and re-measured.
 
 The machine it came from is re-measured in `gate.jsonl` under the current model.
+
+## 2026-08-17-pre-backend-fix.jsonl
+
+One run: `llama3.2:1b` Q8_0 on a macOS VM (`cf62d6b5590582da`), +822.5% error.
+
+Retired because **its bucket key is a value the current code cannot produce.**
+The record says `"backend":"Metal"`, but that machine is a hypervisor guest whose
+paravirtual adapter reports no shader cores. `6181223` made Metal require a GPU
+that reports them, so the same machine now measures as `Cpu` — which is what the
+replacement record already in `gate.jsonl` says.
+
+Leaving it in did active harm rather than merely skewing an average:
+
+1. It was the *only* member of the `Metal/legacy` bucket, so `zc fit` published
+   `eta = 0.108` for every Mac user running a legacy-quant model — a coefficient
+   derived entirely from a machine that has no Metal.
+2. Together with the replacement record it put two values 8x apart in one
+   parent bucket, so the MAD spread exceeded 100% and `zc check --all` printed
+   *negative* decode rates. `predict.rs` now floors the low bound at zero, but
+   the cause was this record.
+
+Not retired for being the largest error on file. The machine's replacement
+record still misses by +410.1% and stays in the dataset, where it keeps the
+`zc gate` uneven-accuracy warning lit until that residual is understood.

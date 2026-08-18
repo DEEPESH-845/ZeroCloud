@@ -217,6 +217,37 @@ fn key(backend: &str, family: QuantFamily) -> String {
     format!("{backend}/{}", family.tag())
 }
 
+/// The curated cross-machine dataset, compiled into the binary.
+///
+/// Without this an *installed* `zc` has no calibration at all: `gate.jsonl`
+/// lives in the repo, and a user who ran `curl | sh` has no repo. They saw
+/// `no calibration data yet - ranges are wide priors` and a 2.3x-wide range on
+/// every row, while the README quoted an accuracy number computed from a
+/// dataset their binary could not see. The claim and the tool have to agree.
+///
+/// `include_str!` rather than a build script: cargo tracks it as a build
+/// dependency automatically, so editing the dataset rebuilds.
+pub const EMBEDDED: &str = include_str!("../../../data/calibration/gate.jsonl");
+
+/// Shipped records first, then whatever this machine measured, with exact
+/// duplicate lines dropped.
+///
+/// The dedupe is load-bearing in the repo, where the file on disk *is* the
+/// embedded file: without it every shipped run would count twice and a bucket
+/// backed by one machine would claim two, inflating its confidence tier.
+fn merge(embedded: &str, local: &str) -> String {
+    let mut seen = std::collections::HashSet::new();
+    let mut out = String::with_capacity(embedded.len() + local.len());
+    for line in embedded.lines().chain(local.lines()) {
+        let line = line.trim();
+        if !line.is_empty() && seen.insert(line) {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    out
+}
+
 impl Fit {
     /// Group records and fit each bucket.
     ///
@@ -316,9 +347,8 @@ impl Fit {
     }
 
     pub fn load(path: &std::path::Path) -> Self {
-        std::fs::read_to_string(path)
-            .map(|t| Self::from_records(&parse_records(&t)))
-            .unwrap_or_default()
+        let local = std::fs::read_to_string(path).unwrap_or_default();
+        Self::from_records(&parse_records(&merge(EMBEDDED, &local)))
     }
 
     /// Best available coefficient: exact bucket, then backend parent, then the
@@ -384,6 +414,32 @@ impl Fit {
 
 #[cfg(test)]
 mod tests {
+    /// The repo case: the file on disk is byte-identical to the embedded copy.
+    /// Counting both would double every sample and hand a one-machine bucket
+    /// the confidence tier of a two-machine one.
+    #[test]
+    fn merging_the_dataset_with_itself_changes_nothing() {
+        let a = "{\"one\":1}\n{\"two\":2}\n";
+        assert_eq!(super::merge(a, a), a);
+    }
+
+    /// A user's own `zc verify` must still add evidence on top of the shipped
+    /// dataset -- that is the whole closed loop.
+    #[test]
+    fn a_local_run_adds_to_the_shipped_dataset() {
+        let merged = super::merge("{\"one\":1}\n", "{\"one\":1}\n{\"new\":2}\n");
+        assert_eq!(merged, "{\"one\":1}\n{\"new\":2}\n");
+    }
+
+    /// The binary must not ship an empty dataset. If the calibration file is
+    /// ever emptied or moved, every installed `zc` silently reverts to priors,
+    /// and nothing else in the test suite would notice.
+    #[test]
+    fn the_binary_ships_a_non_empty_dataset() {
+        let n = super::parse_records(super::EMBEDDED).len();
+        assert!(n >= 5, "embedded dataset has only {n} records");
+    }
+
     use super::*;
 
     fn rec(backend: &str, quant: &str, eta: f64) -> Record {

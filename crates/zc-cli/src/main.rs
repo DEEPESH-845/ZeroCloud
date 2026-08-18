@@ -78,7 +78,22 @@ zc verify [MODEL] [--runtime NAME]
                    report no attention geometry, so their models must match a
                    catalog entry or the run is refused rather than guessed.";
 
+/// Version, printed by `--version`. Comes from the workspace `Cargo.toml`, so
+/// a released binary can never disagree with the tag it was built from.
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 fn main() {
+    // Rust ignores SIGPIPE so writes fail with EPIPE, and `println!` panics on
+    // a failed write. `zc check | head` therefore ended in a panic message and
+    // a backtrace hint -- for a tool whose output is meant to be piped into
+    // `head`, `less` and `grep`, that reads as a crash. Restoring the default
+    // disposition makes the process exit quietly when the reader goes away,
+    // which is what every other CLI does.
+    #[cfg(unix)]
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
+
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     // Global flags are stripped before dispatch so they may appear anywhere.
     let as_json = take_flag(&mut args, "--json");
@@ -116,6 +131,17 @@ fn main() {
         println!("{HELP}");
         return;
     }
+    if matches!(cmd, "-V" | "--version" | "version") {
+        println!("zc {VERSION}");
+        return;
+    }
+    // Anything still starting with `-` was not a flag we know. Silently
+    // ignoring it is the worse failure: `zc check --josn` would print a normal
+    // report and the user would never learn the flag did nothing.
+    if let Some(bad) = args.iter().find(|a| a.starts_with('-')) {
+        eprintln!("unknown option '{bad}' -- run `zc --help`");
+        std::process::exit(2);
+    }
     // `fit` and `gate` read a file; no hardware probe needed.
     if cmd == "fit" {
         std::process::exit(fit_cmd::run());
@@ -124,7 +150,7 @@ fn main() {
         std::process::exit(gate_cmd::run());
     }
     if !matches!(cmd, "check" | "verify" | "doctor") {
-        eprintln!("unknown command '{cmd}'\n\n{HELP}");
+        eprintln!("unknown command '{cmd}' -- run `zc --help`");
         std::process::exit(2);
     }
 
@@ -154,10 +180,18 @@ fn main() {
 }
 
 /// Remove `flag` and the value after it, if present.
+///
+/// A flag with nothing after it is an error, not an absent flag: `zc check
+/// --top` used to fall through to the default of 20, so a user who meant
+/// `--top 50` got 20 rows and no indication that anything was wrong.
 fn take_value(args: &mut Vec<String>, flag: &str) -> Option<String> {
     let i = args.iter().position(|a| a == flag)?;
     args.remove(i);
-    (i < args.len()).then(|| args.remove(i))
+    if i >= args.len() {
+        eprintln!("{flag} needs a value");
+        std::process::exit(2);
+    }
+    Some(args.remove(i))
 }
 
 /// Remove `flag` from `args` if present, reporting whether it was there.

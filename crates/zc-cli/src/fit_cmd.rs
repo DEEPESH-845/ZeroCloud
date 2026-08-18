@@ -82,7 +82,16 @@ pub fn summary_text(path: &std::path::Path) -> String {
         return o;
     }
 
-    let _ = writeln!(o, "== fitted coefficients ==  ({})\n", path.display());
+    // Naming a file that does not exist is worse than naming none: an
+    // installed user has no repo, so `local.jsonl` is a path they would go
+    // looking for. The coefficients they see come from the dataset compiled
+    // into the binary, plus their own runs once they have any.
+    let source = if path.is_file() {
+        format!("{}, plus the dataset shipped in this binary", path.display())
+    } else {
+        "the dataset shipped in this binary".to_string()
+    };
+    let _ = writeln!(o, "== fitted coefficients ==  ({source})\n");
     let _ = writeln!(
         o,
         "  {:<24} {:>7} {:>9} {:>9}  confidence",
