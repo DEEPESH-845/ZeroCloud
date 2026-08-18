@@ -43,5 +43,13 @@ esac
 ZC_VERSION=v0.0.0 ZC_DRY_RUN=1 sh install.sh | grep -q "zc-$want" \
   || { echo "installer resolved the wrong target (expected zc-$want)"; exit 1; }
 echo "resolves zc-$want"
+# With only prereleases published, /releases/latest redirects to /releases and
+# the tag parser passed the whole URL through -- non-empty, so the old
+# emptiness check let it build a download URL with an https:// in the middle.
+# A tag never contains a slash.
+if ZC_VERSION='https://github.com/x/releases' ZC_DRY_RUN=1 sh install.sh >/dev/null 2>&1; then
+  echo "installer accepted a URL as a release tag"; exit 1
+fi
+echo "rejects a URL-shaped tag"
 
 echo "OK"
