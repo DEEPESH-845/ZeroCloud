@@ -329,7 +329,13 @@ pub fn predict_with(
     Prediction {
         resident_fraction,
         decode_tok_s: (
-            decode * (1.0 - coef.spread),
+            // A spread wider than 100% is possible and legitimate -- it is what
+            // a bucket holding two machines that disagree by 8x should report.
+            // What it must never do is print a negative rate: nothing generates
+            // fewer than zero tokens per second, and `-0.2-0.7` does not even
+            // parse as a range. Zero is the honest floor, and it still reads as
+            // "we cannot promise this runs usefully at all".
+            (decode * (1.0 - coef.spread)).max(0.0),
             decode * (1.0 + coef.spread),
         ),
         prefill_tok_s: prefill,
@@ -809,6 +815,36 @@ mod tests {
         let measured = Hardware { vram_bw_measured: true, ..hw };
         let m = predict_with(&spec, &quant, &measured, KvPrecision::Q8, 2048, 512, &fit);
         assert_eq!(m.confidence, Confidence::High);
+    }
+
+    /// Two machines in one bucket that disagree by 8x produce a MAD spread
+    /// wider than 100%, and `eta * (1 - spread)` then goes negative. This is
+    /// real: `gate.jsonl` held exactly such a pair, and `zc check --all`
+    /// printed `-0.2-0.7` tok/s for the models it hit. A rate below zero is
+    /// not a wide prediction, it is a broken one.
+    #[test]
+    fn a_disagreeing_bucket_never_predicts_a_negative_rate() {
+        use crate::fit::{Fit, Record};
+        let spec = llama3_8b();
+        let quant = q("Q4_K_M", 4 << 30, crate::spec::QuantFamily::KQuant);
+        let rec = |eta: f64| Record {
+            hw: "x".into(),
+            backend: "Cpu".into(),
+            model: "m".into(),
+            quant: "Q4_K_M".into(),
+            virt: Some("none".into()),
+            quant_family: crate::spec::QuantFamily::KQuant,
+            implied_eta: eta,
+            error_pct: None,
+            within_range: None,
+            implied_prefill_scale: None,
+        };
+        // 8x apart, the spread seen on the real macOS-VM pair.
+        let fit = Fit::from_records(&[rec(0.11), rec(0.92), rec(0.11), rec(0.92)]);
+        let p = predict_with(&spec, &quant, &hw_16gb(), KvPrecision::Q8, 2048, 512, &fit);
+
+        assert!(p.decode_tok_s.0 >= 0.0, "low bound {} is negative", p.decode_tok_s.0);
+        assert!(p.decode_tok_s.1 > p.decode_tok_s.0, "range must not invert");
     }
 
     /// max_context must be monotonic in budget, and zero when the weights do

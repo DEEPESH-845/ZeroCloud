@@ -14,3 +14,10 @@ zc-bench = { path = "../zc-bench" }
 zc-model = { path = "../zc-model" }
 zc-runtime = { path = "../zc-runtime" }
 zc-report = { path = "../zc-report" }
+
+# Only for restoring the default SIGPIPE disposition. Rust's runtime ignores
+# SIGPIPE so that writes return EPIPE, which `println!` then panics on -- so
+# `zc check | head` printed a panic and a backtrace note. Every other crate in
+# the workspace stays dependency-free; this one line is the whole reason.
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true

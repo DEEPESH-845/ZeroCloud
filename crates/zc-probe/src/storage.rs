@@ -51,6 +51,50 @@ pub struct Storage {
     pub source: &'static str,
 }
 
+// Display rather than `{:?}` in reports: these two enums are the only probe
+// results that reach a user as prose, and a hazard is the single most
+// actionable line the tool prints (A9 -- a sync folder is catastrophic and
+// silent). `CloudSync("iCloud Drive")` is a debug dump, not a warning.
+impl std::fmt::Display for Medium {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Medium::Nvme => "NVMe",
+            Medium::Ssd => "SSD",
+            Medium::Rotational => "spinning disk",
+            Medium::Network => "network volume",
+            Medium::Unknown => "unknown medium",
+        })
+    }
+}
+
+impl std::fmt::Display for Hazard {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Hazard::CloudSync(name) => write!(
+                f,
+                "models live in {name}, a sync folder - files may be stubs that \
+                 re-download on read. Move them to a local directory."
+            ),
+            Hazard::NetworkMount(fs) => write!(
+                f,
+                "models live on a network volume ({fs}) - streaming speed is the \
+                 network, not the disk."
+            ),
+            Hazard::Removable => f.write_str(
+                "models live on a removable drive - usually far slower than internal storage.",
+            ),
+            Hazard::Rotational => f.write_str(
+                "models live on a spinning disk - random reads collapse to about 1% of an SSD.",
+            ),
+            Hazard::LowSpace(free) => write!(
+                f,
+                "only {} free on the model volume - not enough for a useful model.",
+                crate::human(*free)
+            ),
+        }
+    }
+}
+
 /// Directories real runtimes use, in the order we prefer them.
 fn candidate_dirs() -> Vec<(PathBuf, &'static str)> {
     let home = std::env::var("HOME")
