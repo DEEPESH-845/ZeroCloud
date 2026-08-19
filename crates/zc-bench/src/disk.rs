@@ -4,8 +4,11 @@
 //! second run reports 10+ GB/s on a drive that physically cannot exceed 5,
 //! and every downstream prediction is nonsense.
 //!
-//!   macOS   fcntl(F_NOCACHE) — reads bypass the buffer cache. No alignment
-//!           requirement, which makes this the easy platform.
+//!   macOS   fcntl(F_NOCACHE) — no alignment requirement, but it only stops
+//!           *future* caching. Pages already resident are still served from
+//!           the unified buffer cache, so a model file a runtime currently has
+//!           mapped reads at 68 GB/s on a 2 GB/s drive. They have to be
+//!           invalidated first — see `drop_cached_pages`.
 //!   Linux   O_DIRECT — genuinely bypasses, but demands that buffer address,
 //!           file offset and length are all block-aligned, or read() fails
 //!           with EINVAL.
@@ -142,7 +145,12 @@ fn open_uncached(path: &Path) -> io::Result<(File, bool)> {
         // SAFETY: fd is valid and owned by `f` for the duration of the calls.
         let nocache = unsafe { libc::fcntl(fd, libc::F_NOCACHE, 1) } == 0;
         unsafe { libc::fcntl(fd, libc::F_RDAHEAD, 0) };
-        Ok((f, nocache))
+        let len = f.metadata()?.len();
+        // F_NOCACHE alone measured this machine's SSD at 20.6 GB/s while it was
+        // physically doing 2.05 GB/s, because the file was already in the cache.
+        // Evicting first is the difference between a measurement and a memcpy.
+        let evicted = drop_cached_pages(fd, len);
+        Ok((f, nocache && evicted))
     }
     #[cfg(windows)]
     {
@@ -170,6 +178,39 @@ fn open_uncached(path: &Path) -> io::Result<(File, bool)> {
     #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
     {
         Ok((File::open(path)?, false))
+    }
+}
+
+/// Evict this file's resident pages from the unified buffer cache.
+///
+/// `msync(MS_INVALIDATE)` over a shared read-only mapping is the only portable-
+/// on-macOS way to do it without root: `purge(8)` needs privileges and drops
+/// the whole system's cache, which is both rude and slower.
+///
+/// Returns false if the eviction did not happen, which makes `uncached` false
+/// and gets the number labelled `[CACHED - inflated]` rather than published as
+/// a disk speed.
+///
+/// ponytail: another process may fault the same pages back in while we measure
+/// — a runtime holding the model mapped will. One eviction before the loop is
+/// what we can do without fighting for the cache; the upgrade, if it ever
+/// matters, is to prefer a scratch file over a file someone else has open.
+#[cfg(target_os = "macos")]
+fn drop_cached_pages(fd: std::os::unix::io::RawFd, len: u64) -> bool {
+    if len == 0 {
+        return false;
+    }
+    let len = len as usize;
+    // SAFETY: a fresh MAP_SHARED PROT_READ mapping of a file we hold open;
+    // msync and munmap operate only on the address range mmap just returned.
+    unsafe {
+        let addr = libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ, libc::MAP_SHARED, fd, 0);
+        if addr == libc::MAP_FAILED {
+            return false;
+        }
+        let ok = libc::msync(addr, len, libc::MS_INVALIDATE) == 0;
+        libc::munmap(addr, len);
+        ok
     }
 }
 
@@ -293,4 +334,30 @@ pub fn measure(target: Option<&Path>, scratch_dir: &Path, threads: usize) -> io:
         file_bytes: span,
         created_file,
     })
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    /// The eviction has to actually succeed, or every macOS disk number is a
+    /// page-cache read wearing a disk number's clothes. Constants and argument
+    /// order are the whole risk here, and both fail loudly as a false return.
+    #[test]
+    fn cached_pages_can_be_dropped() {
+        use std::io::Write;
+        use std::os::unix::io::AsRawFd;
+
+        let path = std::env::temp_dir().join("zc-bench-evict-test.bin");
+        let mut f = std::fs::File::create(&path).expect("create");
+        f.write_all(&vec![0x5Au8; 1 << 20]).expect("write");
+        f.sync_all().expect("sync");
+        drop(f);
+
+        let f = std::fs::File::open(&path).expect("open");
+        assert!(super::drop_cached_pages(f.as_raw_fd(), 1 << 20));
+        // A zero-length file has no pages, and claiming success would let an
+        // empty scratch file report itself as honestly measured.
+        assert!(!super::drop_cached_pages(f.as_raw_fd(), 0));
+
+        let _ = std::fs::remove_file(&path);
+    }
 }
