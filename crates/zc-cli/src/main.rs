@@ -62,6 +62,10 @@ zc check
                    `zc check --json` emits one object:
                    .schema                     integer, bumped when this breaks
                    .machine.{cpu,memory,env,storage,gpus,budget}
+                   .machine.storage.{model_dir,mount}
+                                               home-relative (`~/...`), so a
+                                                report you attach carries no
+                                                account name. Schema 2.
                    .machine.gpus[]             name, vendor, vram_bytes (0 for
                                                 integrated - it shares system
                                                 memory rather than adding any),

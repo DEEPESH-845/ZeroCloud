@@ -77,6 +77,62 @@ pub struct Report<'a> {
     pub models: Vec<Row<'a>>,
 }
 
+/// Replace the user's home directory with `~`.
+///
+/// A single substring replacement rather than anything clever, because the
+/// failure mode that matters is *missing* an occurrence, not over-matching.
+/// `/Users/alice/models/x.gguf` carries a real name into a public bug report.
+///
+/// Lives at the crate root because four surfaces need it now, not just the
+/// Markdown one: `zc fit`, `zc gate` and `zc share` all name the calibration
+/// file they read, and `--json` carries the model directory.
+pub fn redact(s: &str, home: Option<&str>) -> String {
+    match home.filter(|h| !h.is_empty() && *h != "/") {
+        Some(h) => s.replace(h, "~"),
+        None => s.to_string(),
+    }
+}
+
+/// The user's home directory, however this platform spells it.
+pub fn home() -> Option<String> {
+    std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .ok()
+}
+
+/// Convenience for the common case: redact against the real environment.
+pub fn redact_home(s: &str) -> String {
+    redact(s, home().as_deref())
+}
+
+/// Wrap `text` to `width` columns, indenting every line by `indent` spaces.
+///
+/// Greedy, whitespace-only, and deliberately dumb: a word longer than the
+/// width gets its own over-long line rather than being broken, because the
+/// long words here are file paths and URLs and a path split across two lines
+/// is a path nobody can copy.
+pub fn wrap(text: &str, width: usize, indent: usize) -> Vec<String> {
+    let pad = " ".repeat(indent);
+    let room = width.saturating_sub(indent).max(1);
+    let mut out = Vec::new();
+    let mut line = String::new();
+    for word in text.split_whitespace() {
+        if line.is_empty() {
+            line.push_str(word);
+        } else if line.chars().count() + 1 + word.chars().count() <= room {
+            line.push(' ');
+            line.push_str(word);
+        } else {
+            out.push(format!("{pad}{line}"));
+            line = word.to_string();
+        }
+    }
+    if !line.is_empty() {
+        out.push(format!("{pad}{line}"));
+    }
+    out
+}
+
 /// Stable machine-readable tag for a verdict.
 ///
 /// Separate from `Debug` on purpose: `Debug` output is free to change, and
@@ -310,5 +366,39 @@ mod width_tests {
     fn the_sort_cycle_closes() {
         let s = super::SortKey::Verdict;
         assert_eq!(s.next().next().next(), s);
+    }
+}
+
+#[cfg(test)]
+mod wrap_tests {
+    use super::wrap;
+
+    #[test]
+    fn wraps_to_the_width_including_the_indent() {
+        let t = "the quick brown fox jumps over the lazy dog and keeps running";
+        for w in [20usize, 40, 80] {
+            for l in wrap(t, w, 2) {
+                assert!(l.chars().count() <= w, "{} cols at w={w}: {l}", l.chars().count());
+                assert!(l.starts_with("  "));
+            }
+        }
+    }
+
+    /// A path or a URL longer than the width gets its own line rather than
+    /// being broken -- a path split across two lines is one nobody can copy.
+    #[test]
+    fn an_overlong_word_is_never_broken() {
+        let long = "~/Library/Application/Support/zerocloud/a/very/long/path.jsonl";
+        let out = wrap(&format!("from {long} onwards"), 30, 2);
+        assert!(out.iter().any(|l| l.contains(long)), "{out:?}");
+        assert_eq!(out.concat().matches("jsonl").count(), 1);
+    }
+
+    #[test]
+    fn no_line_is_blank_or_padded_only() {
+        assert!(wrap("", 80, 2).is_empty());
+        for l in wrap("   spaced   out   ", 80, 2) {
+            assert_eq!(l.trim_end(), l);
+        }
     }
 }
