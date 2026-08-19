@@ -362,9 +362,14 @@ impl Fit {
         Fit { buckets, parents, prefill }
     }
 
+    /// Fit from already-concatenated records, so a caller assembling several
+    /// files does not have to make `fit` care how many there are.
+    pub fn from_text(local: &str) -> Self {
+        Self::from_records(&parse_records(&merge(EMBEDDED, local)))
+    }
+
     pub fn load(path: &std::path::Path) -> Self {
-        let local = std::fs::read_to_string(path).unwrap_or_default();
-        Self::from_records(&parse_records(&merge(EMBEDDED, &local)))
+        Self::from_text(&std::fs::read_to_string(path).unwrap_or_default())
     }
 
     /// Best available coefficient: exact bucket, then backend parent, then the

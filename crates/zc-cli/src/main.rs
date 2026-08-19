@@ -179,7 +179,7 @@ fn main() {
     // give two different answers if thermal state shifted between them.
     let m = machine::probe();
 
-    let fit = zc_model::Fit::load(&fit_cmd::path());
+    let fit = zc_model::Fit::from_text(&fit_cmd::read_text(&fit_cmd::sources()));
 
     let code = match runtime {
         Some(rt) => verify::run(&m, rt.as_ref(), &fit, kv, args.get(1).map(String::as_str)),
