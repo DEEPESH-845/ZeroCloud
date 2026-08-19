@@ -5,7 +5,7 @@
 //! disagree about a number.
 
 use crate::machine::Machine;
-use zc_model::{catalog, predict, Fit, KvPrecision, Verdict};
+use zc_model::{catalog, predict, Fit, KvPrecision};
 use zc_report::{Assumptions, Report, Row};
 
 const UBATCH: u32 = 512;
@@ -52,61 +52,6 @@ pub fn report<'a>(
     }
 }
 
-/// Sort key: what you can actually run, best first.
-///
-/// Verdict leads because it is the answer to the question asked — a fast model
-/// that will not fit is not a better result than a slow one that will. Then
-/// decode speed, then context.
-///
-/// Deliberately *not* a composite score. llmfit blends speed and fit with a
-/// "quality" term built from parameter count and leaderboard opinion; a single
-/// number that mixes a measured tok/s with somebody's ranking cannot be
-/// defended, and defensibility is the product. Every term here is measured or
-/// derived from a measurement.
-fn rank(row: &Row) -> (u8, i64, i64) {
-    let p = &row.prediction;
-    let verdict = match p.verdict {
-        Verdict::Good => 0,
-        Verdict::Usable => 1,
-        Verdict::Slow => 2,
-        Verdict::WontFit => 3,
-    };
-    let mid = (p.decode_tok_s.0 + p.decode_tok_s.1) / 2.0;
-    (verdict, -(mid * 1000.0) as i64, -(p.max_context as i64))
-}
-
-/// Keep one row per model: the highest-fidelity quantisation this machine
-/// still runs as well as it runs any of them.
-///
-/// Listing every quantisation of every model buries the answer — the same
-/// model appears five times, and the fastest rows are whichever model is
-/// smallest. Collapsing needs a rule for "best", and the rule has to stay
-/// measured:
-///
-///   * best verdict first, which is derived from the machine's own numbers;
-///   * then the *largest* file, because bytes per parameter is quantisation
-///     fidelity and more bits is less quantisation error. That is arithmetic,
-///     not a leaderboard opinion.
-///
-/// So each row is "the best version of this model you can actually run".
-fn best_per_model<'a>(rows: Vec<Row<'a>>) -> Vec<Row<'a>> {
-    let mut best: Vec<Row<'a>> = Vec::new();
-    for row in rows {
-        match best.iter().position(|b| b.model_id == row.model_id) {
-            None => best.push(row),
-            Some(i) => {
-                let cur = &best[i];
-                let better = rank(&row).0 < rank(cur).0
-                    || (rank(&row).0 == rank(cur).0 && row.quant.bytes > cur.quant.bytes);
-                if better {
-                    best[i] = row;
-                }
-            }
-        }
-    }
-    best
-}
-
 pub fn run(
     m: &Machine,
     fit: &Fit,
@@ -128,9 +73,9 @@ pub fn run(
         }
     }
     if !all_quants {
-        models = best_per_model(models);
+        models = zc_report::best_per_model(models);
     }
-    models.sort_by_key(rank);
+    models.sort_by_key(zc_report::rank);
     let total_rows = models.len();
     if let Some(n) = top {
         models.truncate(n);
