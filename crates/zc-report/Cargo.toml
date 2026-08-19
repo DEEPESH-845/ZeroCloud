@@ -3,8 +3,10 @@ name = "zc-report"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+description = "Renders one ZeroCloud prediction as a terminal table, JSON, or a Markdown bug report."
+repository.workspace = true
 
 [dependencies]
-zc-probe = { path = "../zc-probe" }
-zc-bench = { path = "../zc-bench" }
-zc-model = { path = "../zc-model" }
+zc-probe = { path = "../zc-probe", version = "0.1.0" }
+zc-bench = { path = "../zc-bench", version = "0.1.0" }
+zc-model = { path = "../zc-model", version = "0.1.0" }

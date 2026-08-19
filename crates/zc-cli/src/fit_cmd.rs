@@ -5,7 +5,11 @@
 
 use zc_model::{fit::Confidence, Fit};
 
-const DEFAULT_DIR: &str = "data/calibration";
+// Under the crate, not the repo root, so `cargo package -p zc-model` can
+// verify: a published `.crate` contains only its own directory, and build.rs
+// embeds this dataset at compile time. Still resolved relative to the
+// repository root, because its job is to detect a checkout.
+const DEFAULT_DIR: &str = "crates/zc-model/data/calibration";
 const APP: &str = "zerocloud";
 const LOCAL: &str = "local.jsonl";
 const CURATED: &str = "gate.jsonl";

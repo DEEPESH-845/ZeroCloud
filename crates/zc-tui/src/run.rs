@@ -76,17 +76,21 @@ fn vim_key(k: Key, filtering: bool) -> Key {
 /// Recomputed on every keystroke rather than cached: the row set is at most a
 /// few hundred entries, and a cache invalidated on four different state
 /// changes is a bug waiting for the fifth.
-pub fn visible_rows(r: &Report, s: &State) -> Vec<usize> {
+/// Returns the rows to show, and how many the current view holds *before* the
+/// filter — the footer's denominator. Using the report's own total there was
+/// wrong in one view or the other, since `a` changes what "all of them" means.
+pub fn visible_rows(r: &Report, s: &State) -> (Vec<usize>, usize) {
     let mut idx: Vec<usize> = (0..r.models.len()).collect();
     if !s.show_all {
         idx = best_per_model_indices(&r.models, &idx);
     }
+    let unfiltered = idx.len();
     if !s.filter.is_empty() {
         let needle = s.filter.to_ascii_lowercase();
         idx.retain(|&i| r.models[i].model_id.to_ascii_lowercase().contains(&needle));
     }
     idx.sort_by_key(|&i| rank_by(&r.models[i], s.sort));
-    idx
+    (idx, unfiltered)
 }
 
 pub fn run(r: &Report, cs: Charset) -> std::io::Result<()> {
@@ -101,11 +105,11 @@ pub fn run(r: &Report, cs: Charset) -> std::io::Result<()> {
     loop {
         let (w, h) = terminal::size().unwrap_or((80, 24));
         let (w, h) = (w as usize, h as usize);
-        let rows = visible_rows(r, &s);
+        let (rows, total) = visible_rows(r, &s);
         s.set_len(rows.len());
         s.scroll_into_view(body_height(h));
 
-        let lines = frame(&view, &rows, &s, cs, w, h);
+        let lines = frame(&view, &rows, total, &s, cs, w, h);
         queue!(out, terminal::Clear(terminal::ClearType::All))?;
         for (i, l) in lines.iter().enumerate() {
             queue!(out, cursor::MoveTo(0, i as u16))?;

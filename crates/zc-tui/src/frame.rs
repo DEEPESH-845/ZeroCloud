@@ -117,6 +117,7 @@ pub fn body_height(h: usize) -> usize {
 pub fn frame(
     v: &View,
     idx: &[usize],
+    total: usize,
     s: &State,
     cs: Charset,
     w: usize,
@@ -232,7 +233,7 @@ pub fn frame(
     }
     out.truncate(h.saturating_sub(BOTTOM));
     out.push(fit(&cs.rule().repeat(w), w));
-    out.push(fit(&footer(v, idx, s, cs), w));
+    out.push(fit(&footer(idx, total, s, cs), w));
     pad_to(&mut out, h, w);
     out
 }
@@ -311,7 +312,7 @@ pub fn layout(v: &View, idx: &[usize], w: usize) -> (usize, Cols) {
     (mw, c)
 }
 
-fn footer(v: &View, idx: &[usize], s: &State, cs: Charset) -> String {
+fn footer(idx: &[usize], total: usize, s: &State, cs: Charset) -> String {
     if s.filtering {
         return format!("  /{}_", s.filter);
     }
@@ -321,7 +322,7 @@ fn footer(v: &View, idx: &[usize], s: &State, cs: Charset) -> String {
     format!(
         "  {} of {} {} sort {} {} enter why {} / filter {} a quants {} ? keys {} q quit",
         idx.len(),
-        v.total_rows,
+        total,
         cs.sep(),
         s.sort.label(),
         cs.sep(),
@@ -463,7 +464,8 @@ mod tests {
         let idx: Vec<usize> = (0..v.rows.len()).collect();
         let mut s = State::new(idx.len());
         f(&mut s);
-        frame(&v, &idx, &s, cs, w, h)
+        let n = idx.len();
+        frame(&v, &idx, n, &s, cs, w, h)
     }
 
     fn plain(w: usize, h: usize) -> Vec<String> {
@@ -594,7 +596,7 @@ mod tests {
         let v = view();
         let mut s = State::new(0);
         s.filter = "zzz".into();
-        let f = frame(&v, &[], &s, Charset::Unicode, 80, 24);
+        let f = frame(&v, &[], 3, &s, Charset::Unicode, 80, 24);
         assert!(f.iter().any(|l| l.contains("nothing matches")), "{f:?}");
         assert_eq!(f.len(), 24);
     }

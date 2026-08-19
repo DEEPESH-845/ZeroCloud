@@ -3,9 +3,11 @@ name = "zc-runtime"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+description = "Talks to local LLM runtimes (Ollama, llama.cpp, LM Studio) to measure real decode and prefill rates."
+repository.workspace = true
 
 [dependencies]
-zc-model = { path = "../zc-model" }
+zc-model = { path = "../zc-model", version = "0.1.0" }
 
 [dev-dependencies]
-zc-model = { path = "../zc-model" }
+zc-model = { path = "../zc-model", version = "0.1.0" }

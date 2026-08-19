@@ -64,6 +64,35 @@ zc-x86_64-apple-darwin              zc-aarch64-apple-darwin
 zc-x86_64-pc-windows-msvc.exe
 ```
 
+## The one command that ships it
+
+Everything below the tag is automated. Run this only when `main` is green and
+you have read the checklist above it:
+
+```sh
+git tag -a v0.1.0 -m "v0.1.0" && git push origin v0.1.0
+```
+
+`release.yml` then creates the release, builds five targets, runs
+`scripts/contract_smoke.py` against **each built artifact** before uploading —
+22 assertions on the binary a user will actually download — and attaches them.
+A tag containing a hyphen (`v0.1.0-rc1`) is published as a prerelease, and
+`/releases/latest` ignores prereleases, so `curl | sh` keeps reporting
+"no published release yet" until a hyphen-free tag exists.
+
+Before tagging, confirm locally:
+
+```sh
+./check.sh                                   # tests, clippy, cross-compile,
+                                             # contracts, tui, installer
+cargo package -p zc-model                    # must say Packaged AND Finished
+grep -c version crates/*/Cargo.toml          # every crate carries one
+```
+
+A tag is not reversible in any way that matters: people will have fetched it.
+Deleting and re-pushing the same tag leaves anyone who installed in between on
+a build nobody can reproduce.
+
 ## Verify the way a user experiences it
 
 Do this on a machine that is not the one you built on, from a directory that is
@@ -175,9 +204,10 @@ end
 Then `brew install DEEPESH-845/zerocloud/zc`. Revisit `homebrew-core` after a
 few hundred stars.
 
-## crates.io — blocked, and why
+## crates.io
 
-`cargo install zc-cli` does **not** work today, and publishing would fail:
+`cargo install zc-cli` works. It did not until 2026-08-20, and the block was a
+directory layout rather than a code problem:
 
 ```
 $ cargo package -p zc-model
@@ -185,22 +215,43 @@ error: failed to verify package tarball
   cannot read ../../data/models: No such file or directory
 ```
 
-`crates/zc-model/build.rs` embeds `data/models/*.json` and `fit.rs` embeds
-`data/calibration/gate.jsonl`, both of which live *above* the package root. A
-published `.crate` contains only its own directory, so the build script finds
-nothing.
+`build.rs` embeds `data/models/*.json` and the calibration dataset at compile
+time, and both lived *above* the package root — a published `.crate` contains
+only its own directory, so the build script found nothing. `data/` now lives at
+`crates/zc-model/data/`, which is inside the package and therefore inside the
+tarball.
 
-The fix is a directory move, not a code change: relocate `data/` to
-`crates/zc-model/data/` and update `build.rs`, `fit.rs`, `fit_cmd.rs`,
-`catalog.rs`, `.gitignore`, both workflows, `CONTRIBUTING.md` and
-`docs/gate-runbook.md`. Every crate would also need `description`, `repository`
-and concrete `version =` on its path dependencies.
+The objection on record was that moving the contribution surface out of the
+repo root buries it right before asking for contributions. That objection
+predates `zc share`, which now *generates* the pull-request URL — so no
+contributor types the path, and the depth costs nothing.
 
-That is worth doing when Rust developers ask for `cargo install`. It is not
-worth doing before launch: the binary path already covers everyone, and moving
-the community's contribution surface out of the repo root right before asking
-for contributions is the wrong trade. `cargo binstall zc-cli` would still need
-the crate published, so it inherits the same block.
+**Publish bottom-up.** `cargo package` for a crate resolves its dependencies
+against the registry, so a dependent cannot even be packaged until everything
+it needs is already published. That is ordinary sequencing, not a fault:
+
+```sh
+cargo publish -p zc-bench
+cargo publish -p zc-probe
+cargo publish -p zc-model     # carries data/ -- verify this one first
+cargo publish -p zc-report
+cargo publish -p zc-runtime
+cargo publish -p zc-tui
+cargo publish -p zc-cli       # the binary; this is what `cargo install` gets
+```
+
+Before the first publish, confirm the one that used to fail:
+
+```sh
+cargo package -p zc-model     # must say "Packaged" AND "Finished"
+```
+
+Versions are inherited from `[workspace.package]`, so a release bumps one
+number. Every crate carries a `description` — crates.io rejects a publish
+without one, and all seven were missing it until the same day.
+
+Publishing is **not** reversible: a version can be yanked but never replaced.
+Publish only from a tagged commit that CI has already passed.
 
 ## After the tag
 

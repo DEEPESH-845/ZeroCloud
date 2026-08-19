@@ -138,6 +138,10 @@ pub fn on_key(s: &mut State, k: Key) -> Action {
         Key::Char('s') => s.sort = s.sort.next(),
         Key::Char('a') => s.show_all = !s.show_all,
         Key::Char('?') => s.help = true,
+        // Esc dismisses whatever is showing before it quits. A user who
+        // committed a filter with enter and then pressed esc to clear it used
+        // to have the program exit under them.
+        Key::Esc if !s.filter.is_empty() => s.filter.clear(),
         Key::Char('q') | Key::Esc => return Action::Quit,
         _ => {}
     }
@@ -231,6 +235,23 @@ mod tests {
         assert!(!s.filtering);
         assert_eq!(s.filter, "", "leaving the filter clears it");
         assert_eq!(on_key(&mut s, Key::Esc), Action::Quit);
+    }
+
+    /// Committing a filter with enter leaves it active while no longer
+    /// editing. Esc then has something to dismiss, and dismissing it must not
+    /// mean exiting.
+    #[test]
+    fn esc_clears_a_committed_filter_before_it_quits() {
+        let mut s = st(5);
+        on_key(&mut s, Key::Slash);
+        on_key(&mut s, Key::Char('q'));
+        on_key(&mut s, Key::Char('w'));
+        assert_eq!(on_key(&mut s, Key::Enter), Action::Redraw);
+        assert!(!s.filtering, "enter commits the filter");
+        assert_eq!(s.filter, "qw", "and leaves it active");
+        assert_eq!(on_key(&mut s, Key::Esc), Action::Redraw, "esc clears it");
+        assert_eq!(s.filter, "");
+        assert_eq!(on_key(&mut s, Key::Esc), Action::Quit, "then esc quits");
     }
 
     #[test]

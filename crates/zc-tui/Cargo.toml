@@ -3,11 +3,12 @@ name = "zc-tui"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+description = "The interactive terminal UI for `zc check`."
 repository.workspace = true
 
 [dependencies]
-zc-report = { path = "../zc-report" }
-zc-model = { path = "../zc-model" }
+zc-report = { path = "../zc-report", version = "0.1.0" }
+zc-model = { path = "../zc-model", version = "0.1.0" }
 
 # The only crate in this workspace permitted to name crossterm. It buys raw
 # mode, key-event parsing and resize handling on Windows -- the one layer
@@ -17,5 +18,5 @@ zc-model = { path = "../zc-model" }
 crossterm.workspace = true
 
 [dev-dependencies]
-zc-probe = { path = "../zc-probe" }
-zc-bench = { path = "../zc-bench" }
+zc-probe = { path = "../zc-probe", version = "0.1.0" }
+zc-bench = { path = "../zc-bench", version = "0.1.0" }
