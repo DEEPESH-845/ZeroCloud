@@ -13,6 +13,7 @@
 pub mod charset;
 pub mod json;
 pub mod markdown;
+pub mod progress;
 pub mod text;
 
 use zc_bench::{compute::ComputeResult, disk::DiskResult, ram::RamResult};
