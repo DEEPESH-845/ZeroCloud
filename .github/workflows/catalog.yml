@@ -39,7 +39,7 @@ jobs:
   self-test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: python3 scripts/ingest_hf.py --self-test
 
   # Does what ships still parse, and is every quantisation a possible size for
@@ -47,7 +47,7 @@ jobs:
   catalog-tests:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: cargo test -p zc-model --quiet
 
   ingest:
@@ -58,7 +58,7 @@ jobs:
       contents: write
       pull-requests: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # Meta and Google gate their base repos behind a licence click, so
       # config.json is a 401 without a token. Without the secret those models

@@ -18,7 +18,7 @@
 
 use std::fs::File;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 const BLOCK_LARGE: usize = 128 << 10; // matches NVMe optimal transfer size
@@ -285,6 +285,23 @@ fn read_loop_parallel(
     )
 }
 
+/// Deletes the scratch file on *every* exit path.
+///
+/// Five `?` returns used to sit between creating a 512 MiB scratch file and the
+/// `remove_file` at the end of `measure`, so a failed write left the whole thing
+/// orphaned in the user's home directory. The way that write fails is a full
+/// disk, which is squarely the hardware this project targets -- the machine
+/// least able to spare half a gigabyte was the one guaranteed to keep it.
+struct Scratch(Option<PathBuf>);
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        if let Some(p) = self.0.take() {
+            let _ = std::fs::remove_file(p);
+        }
+    }
+}
+
 /// Benchmark the volume that `target` lives on.
 ///
 /// `target` should be an existing large file so that we write nothing. If it
@@ -293,6 +310,8 @@ fn read_loop_parallel(
 pub fn measure(target: Option<&Path>, scratch_dir: &Path, threads: usize) -> io::Result<DiskResult> {
     const MIN_SPAN: u64 = 512 << 20;
 
+    // Declared before the file exists so the guard covers the creation itself.
+    let mut scratch = Scratch(None);
     let (path, created_file) = match target {
         Some(p) if std::fs::metadata(p).map(|m| m.len()).unwrap_or(0) >= MIN_SPAN => {
             (p.to_path_buf(), false)
@@ -300,6 +319,7 @@ pub fn measure(target: Option<&Path>, scratch_dir: &Path, threads: usize) -> io:
         _ => {
             let p = scratch_dir.join(".zc-bench-scratch.tmp");
             let f = File::create(&p)?;
+            scratch.0 = Some(p.clone());
             f.set_len(MIN_SPAN)?;
             // set_len allocates sparsely; write real blocks so reads hit media
             // rather than the filesystem's hole-punching fast path.
@@ -320,9 +340,8 @@ pub fn measure(target: Option<&Path>, scratch_dir: &Path, threads: usize) -> io:
     let (b3, _, t3) = read_loop_parallel(&file, span, BLOCK_LARGE, threads, SAMPLE);
     let (_, o4, t4) = read_loop_parallel(&file, span, BLOCK_SMALL, threads, SAMPLE);
 
-    if created_file {
-        let _ = std::fs::remove_file(&path);
-    }
+    // `scratch` removes it on drop, including on every `?` above.
+    drop(scratch);
 
     Ok(DiskResult {
         seq_qd1_gbs: b1 as f64 / t1 / 1e9,
@@ -336,11 +355,36 @@ pub fn measure(target: Option<&Path>, scratch_dir: &Path, threads: usize) -> io:
     })
 }
 
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(test)]
 mod tests {
+    /// The scratch file must not survive an early return.
+    ///
+    /// Five `?` operators sit between creating it and the end of `measure`, and
+    /// the way the write fails is a full disk -- the machine least able to spare
+    /// 512 MiB was the one guaranteed to be left holding it.
+    #[test]
+    fn a_scratch_file_does_not_survive_an_early_return() {
+        let path = std::env::temp_dir().join("zc-bench-scratch-guard-test.bin");
+        std::fs::write(&path, b"x").expect("write");
+        assert!(path.exists());
+        {
+            let _guard = super::Scratch(Some(path.clone()));
+        }
+        assert!(!path.exists(), "the guard must delete it on every exit path");
+    }
+
+    /// A scratch directory that cannot be written to must produce an error and
+    /// no file, rather than a panic or a half-written half-gigabyte.
+    #[test]
+    fn an_unwritable_scratch_directory_is_an_error_not_a_mess() {
+        let nowhere = std::path::Path::new("/dev/null/definitely-not-a-directory");
+        assert!(super::measure(None, nowhere, 2).is_err());
+    }
+
     /// The eviction has to actually succeed, or every macOS disk number is a
     /// page-cache read wearing a disk number's clothes. Constants and argument
     /// order are the whole risk here, and both fail loudly as a false return.
+    #[cfg(target_os = "macos")]
     #[test]
     fn cached_pages_can_be_dropped() {
         use std::io::Write;

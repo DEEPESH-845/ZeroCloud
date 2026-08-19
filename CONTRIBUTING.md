@@ -16,7 +16,11 @@ zc share
 ```
 
 `zc verify` prints predicted vs actual and appends one JSON line to
-`data/calibration/local.jsonl`, on your disk and nowhere else. `zc share` then
+your calibration file, on your disk and nowhere else — inside a checkout that
+is `data/calibration/local.jsonl`, and outside one it is your platform's data
+directory (`~/Library/Application Support/zerocloud` on macOS,
+`~/.local/share/zerocloud` on Linux, `%LOCALAPPDATA%\zerocloud` on Windows).
+Every command that touches it prints the full path. `zc share` then
 shows you that line field by field, tells you what is not in it, and builds a
 GitHub URL with the record prefilled — asking before it hands that URL to your
 browser. `zc` opens no connection itself; your browser does, and you watch it.

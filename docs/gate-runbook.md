@@ -88,8 +88,10 @@ not five of the same laptop:
 
        zc verify qwen3:1.7b
 
-   Repeat per model. Each run appends one line to `data/calibration/local.jsonl`
-   relative to the working directory.
+   Repeat per model. Each run appends one line to `local.jsonl` in your data
+   directory and prints the full path. Inside a checkout that is
+   `data/calibration/local.jsonl`; outside one it is the platform's per-user
+   data directory, so it does not matter which directory you run from.
 
 6. **Carry back** that `local.jsonl` and the doctor bundle.
 
