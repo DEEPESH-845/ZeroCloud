@@ -12,6 +12,8 @@ repository = "https://github.com/DEEPESH-845/ZeroCloud"
 # `libc.workspace = true`. Keeps versions consistent across the workspace.
 [workspace.dependencies]
 libc = "0.2"
+# Confined to zc-tui. See that crate's manifest for why it is here at all.
+crossterm = "0.29"
 
 [profile.release]
 lto = "thin"        # cross-crate inlining; we care about a small, fast binary

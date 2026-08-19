@@ -1,0 +1,21 @@
+[package]
+name = "zc-tui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+zc-report = { path = "../zc-report" }
+zc-model = { path = "../zc-model" }
+
+# The only crate in this workspace permitted to name crossterm. It buys raw
+# mode, key-event parsing and resize handling on Windows -- the one layer
+# VERIFICATION.md records as never executed here, and therefore the one layer
+# not worth writing blind. Everything decidable lives in `state` and `frame`,
+# which never mention it and are tested without a terminal.
+crossterm.workspace = true
+
+[dev-dependencies]
+zc-probe = { path = "../zc-probe" }
+zc-bench = { path = "../zc-bench" }

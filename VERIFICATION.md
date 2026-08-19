@@ -565,3 +565,55 @@ because it cannot be executed or validated on this machine, and shipping a secon
 unvalidated cross-platform path while the first one is still unvalidated is how
 the Windows compile break in bug 15 survived for days. It goes in on the machine
 that can run it.
+
+---
+
+# Phase: Terminal UX — 2026-08-19
+
+Design: `docs/superpowers/specs/2026-08-19-terminal-ux-design.md`.
+Branch `terminal-ux`.
+
+## Bugs found by running the release binary from outside the repo
+
+The habit from Phase 0 found four more, with tests, clippy and CI green
+throughout — the same conditions under which it found seven in August.
+
+| # | Bug | Why nothing else caught it |
+|---|---|---|
+| 1 | `zc doctor` printed the OS username | The fit summary was the one string in that renderer that bypassed `redact`, and no test rendered a report end to end |
+| 2 | Every flag accepted by every subcommand, silently ignored | `zc doctor --json` printed Markdown and exited 0. Exit codes were right, so nothing looked wrong |
+| 3 | Rows ran to 93 columns whenever a model spilled to disk | Only visible on a machine where something spills — which is the target market, not the dev machine |
+| 4 | The whole benchmark ran with a dead terminal | 1.88s here; the machines where it is worst are the ones nobody has run it on |
+
+Then, after fixing 1, three more surfaces turned out to have the same leak:
+`zc fit`, `zc gate` and `--json` all printed the home path, and `zc share`
+printed it three lines above `not in it: ... file paths`.
+
+## Verified, and how
+
+Everything below was executed, not reasoned about.
+
+| Claim | How it was checked |
+|---|---|
+| TUI renders, navigates, filters, explains, quits | Driven on a real pty via Python `pty.openpty()` — `script` does not work in a sandbox |
+| Reflows on resize | `TIOCSWINSZ` + `SIGWINCH` mid-session; max line width equals the new width exactly |
+| Degrades below 40x10 | 30x8 prints "terminal too small" and exits 0 |
+| Columns stay readable at any width | Captured at 100, 72, 58 and 46 columns; the speed column survives all four |
+| Progress appears, and only on a terminal | 180 bytes on a pty, **0 bytes** piped |
+| ASCII fallback | `ZC_ASCII=1` on a pty: no braille, only `-\|/` |
+| Non-TTY output unchanged | Digit-normalised diff against a pre-change capture — a raw diff is useless because `zc` re-measures every run |
+| No surface prints `$HOME` | `check.sh` guard, run from a temp dir, **verified against a deliberately reintroduced leak** |
+| No line exceeds 80 columns | `check.sh` guard over check, `--all`, fit, gate, `--help`, also verified against a failing input |
+| Binary cost of crossterm | 883072 → 986512 bytes, +11.7% |
+
+## NOT verified
+
+| Item | Status |
+|---|---|
+| The TUI on Windows | Never executed. crossterm owns that layer, which is the reason it is a dependency rather than hand-written, but nobody has run it |
+| The TUI on Linux | Never executed. Cross-compiles clean |
+| Legacy `conhost` charset detection | Falls back to ASCII by design (no `TERM`, no `WT_SESSION`), unverified on real hardware |
+| Behaviour on a terminal narrower than 40 columns in the TUI | Message is printed; not seen on real hardware |
+
+The first two are the same gap as every other Windows and Linux path in this
+document, and they close the same way: someone runs it and reports back.

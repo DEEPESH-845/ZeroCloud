@@ -77,7 +77,26 @@ zc --version        # must match the tag
 zc check --top 5    # must NOT say "no calibration data yet"
 zc check | head -3  # must not panic
 zc fit              # names the shipped dataset, not a path that does not exist
+zc chekc            # suggests `zc check` rather than only refusing
+
+# Interactive. The TUI is default-on, so this is what most users meet first.
+zc                  # a table opens; arrows move, enter explains a row,
+                    # / filters, s sorts, a toggles quants, ? lists keys
+                    # q must restore the shell AND leave the report behind
+ZC_ASCII=1 zc       # renders with * o . and -\|/ instead of box drawing
+zc --tui < /dev/null   # must fail with exit 2, not open anything
+
+# Contracts a script depends on. All four must hold on the shipped binary.
+zc check | grep -c $'\033'   # 0 -- no escape sequences in piped stdout
+zc check --json | python3 -m json.tool > /dev/null   # valid JSON
+zc check 2>&1 >/dev/null | wc -c                     # 0 -- stderr silent when piped
+zc check --json | grep -c "$HOME"                    # 0 -- no account name
 ```
+
+Resize the window while the table is open, and shrink it below 40x10: it must
+reflow, and then say the terminal is too small rather than painting something
+unreadable. `check.sh` covers the scriptable half of this on every commit; the
+interactive half needs a human and a real terminal, which is why it is here.
 
 A prerelease is not served by `/releases/latest`, so `curl | sh` will report
 `no published release yet` until a tag without a hyphen exists. To test a

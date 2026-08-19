@@ -9,13 +9,20 @@ mod verify;
 const HELP: &str = "\
 zc - what can this machine run, and how fast?
 
+EXAMPLES
+    zc                    browse what this machine can run  (arrows, ? for keys)
+    zc check --top 5      the five best fits, as plain text
+    zc check --json       the same data, for a script or an agent
+    zc verify qwen3:1.7b  run the model for real and compare
+    zc doctor             a paste-ready report for a bug
+
 USAGE
-    zc [check] [--json] [--kv f16|q8|q4] [--top N | --all]
+    zc [check] [--json] [--kv f16|q8|q4] [--top N] [--all] [--tui | --no-tui]
                           probe hardware and predict model performance
     zc verify [MODEL] [--runtime NAME]
                           run a real model and compare against the prediction
-    zc fit                show fitted coefficients and how much evidence backs them
-    zc gate               how wrong have we been? (exits non-zero until it passes)
+    zc fit                fitted coefficients, and the evidence behind them
+    zc gate               how wrong have we been? (non-zero until it passes)
     zc share [--record FILE] [--print]
                           submit your last `zc verify` measurement upstream
     zc doctor             everything probed, measured and concluded, as Markdown
@@ -37,19 +44,34 @@ zc check
                    parameter is measured and model quality is not.
                    Rows are ranked verdict, then decode speed, then context -
                    every term measured or derived, never a blended score.
-                   `--all` lists every quantisation and lifts the row limit;
-                   `--top N` (default 20) sets it. The cut applies to `--json`
-                   identically, and `.assumptions.total_rows` reports how many
-                   rows existed before it.
+                   `--all` lists every quantisation; `--top N` (default 20)
+                   sets the row limit and applies on top of it, so
+                   `--all --top 3` is three rows drawn from every
+                   quantisation. The cut applies to `--json` identically, and
+                   `.assumptions.total_rows` reports how many rows existed
+                   before it.
+    INTERACTIVE    On a terminal, `zc check` opens a browsable table:
+                   arrows or j/k move, enter shows how a number was derived,
+                   / filters by name, s sorts, a toggles every quantisation,
+                   ? lists the keys, q quits and leaves the report in your
+                   scrollback. Piped, redirected, or with --json it prints
+                   plain text instead -- byte for byte what it always has.
+                   --tui forces it on where the terminal is not detected,
+                   --no-tui forces it off, and ZC_ASCII=1 swaps the
+                   box-drawing glyphs for ASCII on terminals that need it.
                    `zc check --json` emits one object:
-                   .schema                     integer, bumped on breaking change
+                   .schema                     integer, bumped when this breaks
                    .machine.{cpu,memory,env,storage,gpus,budget}
+                   .machine.storage.{model_dir,mount}
+                                               home-relative (`~/...`), so a
+                                                report you attach carries no
+                                                account name. Schema 2.
                    .machine.gpus[]             name, vendor, vram_bytes (0 for
                                                 integrated - it shares system
                                                 memory rather than adding any),
                                                 bw_gbs, bw_measured
                    .measured.{ram,compute,disk} disk is null if unmeasurable
-                   .assumptions                 backend, bandwidths, prompt length
+                   .assumptions                backend, bandwidths, prompt len
                    .models[]                    id, quant, verdict, decode_tok_s
                                                 {low,high}, max_context, ttft_s,
                                                 confidence, resident_fraction
@@ -69,7 +91,8 @@ zc doctor
 zc verify [MODEL] [--runtime NAME]
     PRECONDITIONS  a local runtime that reports its own prefill/decode timings:
                    ollama (:11434), llamacpp (:8080), lmstudio (:1234).
-                   Override with OLLAMA_HOST / LLAMA_SERVER_HOST / LMSTUDIO_HOST.
+                   Override with OLLAMA_HOST, LLAMA_SERVER_HOST or
+                   LMSTUDIO_HOST.
                    vLLM, MLX and Docker Model Runner are detected and reported
                    but refused: their APIs report no timing split, so a rate
                    measured through them would include HTTP and scheduling.
@@ -102,8 +125,9 @@ fn main() {
     // Global flags are stripped before dispatch so they may appear anywhere.
     let as_json = take_flag(&mut args, "--json");
     let runtime = take_value(&mut args, "--runtime");
-    let kv = match take_value(&mut args, "--kv") {
-        Some(v) => match zc_model::KvPrecision::parse(&v) {
+    let kv_arg = take_value(&mut args, "--kv");
+    let kv = match &kv_arg {
+        Some(v) => match zc_model::KvPrecision::parse(v) {
             Some(p) => p,
             None => {
                 eprintln!("unknown --kv value '{v}' (expected f16, q8 or q4)");
@@ -118,7 +142,8 @@ fn main() {
     const DEFAULT_TOP: usize = 20;
     // `--all` means both: every quantisation, and no row limit.
     let show_all = take_flag(&mut args, "--all");
-    let top = match take_value(&mut args, "--top") {
+    let top_arg = take_value(&mut args, "--top");
+    let top = match &top_arg {
         Some(v) => match v.parse::<usize>() {
             Ok(n) if n > 0 => Some(n),
             _ => {
@@ -133,6 +158,8 @@ fn main() {
     // are stripped here with the other globals and never reach the probe.
     let record = take_value(&mut args, "--record");
     let print_only = take_flag(&mut args, "--print");
+    let force_tui = take_flag(&mut args, "--tui");
+    let no_tui = take_flag(&mut args, "--no-tui");
     let cmd = args.first().map(String::as_str).unwrap_or("check");
 
     if matches!(cmd, "-h" | "--help" | "help") {
@@ -150,6 +177,28 @@ fn main() {
         eprintln!("unknown option '{bad}' -- run `zc --help`");
         std::process::exit(2);
     }
+    // A known flag on a command that ignores it fails exactly the way an
+    // unknown flag did: `zc doctor --json` printed Markdown and exited 0, so
+    // an agent piping it into `jq` got a parse error rather than being told
+    // the flag does not apply there. Same rule, same message shape.
+    let supplied = [
+        ("--json", as_json),
+        ("--runtime", runtime.is_some()),
+        ("--kv", kv_arg.is_some()),
+        ("--top", top_arg.is_some()),
+        ("--all", show_all),
+        ("--record", record.is_some()),
+        ("--print", print_only),
+        ("--tui", force_tui),
+        ("--no-tui", no_tui),
+    ];
+    for (flag, present) in supplied {
+        if present && !accepts(cmd, flag) {
+            eprintln!("`zc {cmd}` does not take {flag} -- run `zc --help`");
+            std::process::exit(2);
+        }
+    }
+
     // `fit` and `gate` read a file; no hardware probe needed.
     if cmd == "fit" {
         std::process::exit(fit_cmd::run());
@@ -161,7 +210,10 @@ fn main() {
         std::process::exit(share::run(record.as_deref(), print_only));
     }
     if !matches!(cmd, "check" | "verify" | "doctor") {
-        eprintln!("unknown command '{cmd}' -- run `zc --help`");
+        match did_you_mean(cmd) {
+            Some(c) => eprintln!("unknown command '{cmd}' -- did you mean `zc {c}`?"),
+            None => eprintln!("unknown command '{cmd}' -- run `zc --help`"),
+        }
         std::process::exit(2);
     }
 
@@ -176,6 +228,25 @@ fn main() {
         None
     };
 
+    // The TUI opens only when a human is at both ends of the pipe. Every other
+    // path -- a pipe, a redirect, --json, CI, an agent -- takes the static
+    // renderer and gets exactly what it always got. stdin matters as much as
+    // stdout: raw mode needs a real terminal to read keys from, and `zc < /dev/null`
+    // would otherwise open a screen nobody can drive.
+    let interactive = std::io::IsTerminal::is_terminal(&std::io::stdout())
+        && std::io::IsTerminal::is_terminal(&std::io::stdin())
+        && !as_json
+        && !no_tui
+        && !std::env::var("TERM").is_ok_and(|t| t == "dumb");
+    // Requested and impossible is an error, never a silent downgrade -- the
+    // standing rule about substituting a fallback for the thing that was asked
+    // for applies to the interface as much as to a measurement.
+    if force_tui && !interactive {
+        eprintln!("--tui needs an interactive terminal on both stdin and stdout");
+        std::process::exit(2);
+    }
+    let tui = cmd == "check" && interactive;
+
     // Both subcommands need the same measured facts, and measuring twice could
     // give two different answers if thermal state shifted between them.
     let m = machine::probe();
@@ -185,9 +256,58 @@ fn main() {
     let code = match runtime {
         Some(rt) => verify::run(&m, rt.as_ref(), &fit, kv, args.get(1).map(String::as_str)),
         None if cmd == "doctor" => doctor::run(&m, &fit, kv),
-        None => check::run(&m, &fit, kv, top, show_all, as_json),
+        None => check::run(&m, &fit, kv, top, show_all, as_json, tui),
     };
     std::process::exit(code);
+}
+
+/// The closest command name, if one is close enough to be worth suggesting.
+///
+/// Plain Levenshtein over a six-item list; a fuzzy-match dependency for this
+/// would be absurd. The distance cap is the point: suggesting `share` for
+/// `xyzzy` is worse than saying nothing at all.
+fn did_you_mean(input: &str) -> Option<&'static str> {
+    const CMDS: &[&str] = &["check", "verify", "fit", "gate", "share", "doctor"];
+    CMDS.iter()
+        .map(|c| (*c, distance(input, c)))
+        .filter(|(c, d)| *d <= 2 && *d < c.len())
+        .min_by_key(|(_, d)| *d)
+        .map(|(c, _)| c)
+}
+
+fn distance(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    let mut cur = vec![0usize; b.len() + 1];
+    for i in 1..=a.len() {
+        cur[0] = i;
+        for j in 1..=b.len() {
+            let sub = usize::from(a[i - 1] != b[j - 1]);
+            cur[j] = (prev[j] + 1).min(cur[j - 1] + 1).min(prev[j - 1] + sub);
+        }
+        std::mem::swap(&mut prev, &mut cur);
+    }
+    prev[b.len()]
+}
+
+/// Which flags each command actually reads.
+///
+/// Kept as one table rather than a check at each use site, because the failure
+/// this prevents is a *missing* check: every flag is stripped globally so it
+/// may appear anywhere, and a command that never looks at one would otherwise
+/// accept it in silence.
+fn accepts(cmd: &str, flag: &str) -> bool {
+    let ok: &[&str] = match cmd {
+        "check" => &["--json", "--kv", "--top", "--all", "--tui", "--no-tui"],
+        "verify" => &["--runtime", "--kv"],
+        "doctor" => &["--kv"],
+        "share" => &["--record", "--print"],
+        // `fit` and `gate` read the calibration file and report it. Neither
+        // predicts anything, so no prediction flag applies.
+        _ => &[],
+    };
+    ok.contains(&flag)
 }
 
 /// Remove `flag` and the value after it, if present.
@@ -213,5 +333,57 @@ fn take_flag(args: &mut Vec<String>, flag: &str) -> bool {
             true
         }
         None => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// Every flag the help text lists for a command must be accepted by it,
+    /// and flags it does not read must be refused. `zc doctor --json` used to
+    /// print Markdown and exit 0.
+    /// clig.dev: if the user did something wrong and you can guess what they
+    /// meant, suggest it.
+    #[test]
+    fn a_near_miss_command_is_suggested() {
+        assert_eq!(super::did_you_mean("chekc"), Some("check"));
+        assert_eq!(super::did_you_mean("verift"), Some("verify"));
+        assert_eq!(super::did_you_mean("doctr"), Some("doctor"));
+        assert_eq!(super::did_you_mean("gat"), Some("gate"));
+        assert_eq!(super::did_you_mean("shre"), Some("share"));
+        // Nothing close enough is worse than no suggestion at all.
+        assert_eq!(super::did_you_mean("xyzzy"), None);
+        assert_eq!(super::did_you_mean(""), None);
+    }
+
+    #[test]
+    fn flags_are_scoped_to_the_commands_that_read_them() {
+        for (cmd, flag) in [
+            ("check", "--json"),
+            ("check", "--all"),
+            ("check", "--tui"),
+            ("check", "--no-tui"),
+            ("verify", "--runtime"),
+            ("verify", "--kv"),
+            ("doctor", "--kv"),
+            ("share", "--record"),
+            ("share", "--print"),
+        ] {
+            assert!(super::accepts(cmd, flag), "{cmd} should accept {flag}");
+        }
+        for (cmd, flag) in [
+            ("doctor", "--json"),
+            ("doctor", "--top"),
+            ("doctor", "--tui"),
+            ("gate", "--no-tui"),
+            ("fit", "--json"),
+            ("fit", "--kv"),
+            ("gate", "--json"),
+            ("share", "--json"),
+            ("check", "--runtime"),
+            ("check", "--print"),
+            ("verify", "--top"),
+        ] {
+            assert!(!super::accepts(cmd, flag), "{cmd} must refuse {flag}");
+        }
     }
 }
