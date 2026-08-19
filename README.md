@@ -120,25 +120,64 @@ there is one so far. One machine (a macOS VM) is currently missing by 410% and
 is not being hidden: it is in the dataset, dragging the number, until it is
 understood. Ranges are wide on purpose while the evidence is thin.
 
-Adding a machine is the single most useful contribution right now — see below.
+Adding a machine is the single most useful contribution right now, and it is
+three commands:
+
+```sh
+ollama pull qwen3:1.7b     # or measure whatever you already have
+zc verify qwen3:1.7b       # 30s: predicted vs actual, written to your disk only
+zc share                   # shows you the record, then offers to open a browser
+```
+
+`zc share` prints the whole record first — every field, and the list of what is
+*not* in it — then builds a GitHub URL with that record prefilled and asks
+before opening it:
+
+```
+  hw                     8bc574063a10f63c
+  os                     macos
+  backend                Metal
+  ...
+  error_pct              4.9
+  within_range           true
+
+  not in it: hostname, username, serial number, MAC, IP, file paths
+
+  lands at      data/calibration/community/8bc574063a10f63c-921a62a1.jsonl
+  open in browser? [y/N]
+```
+
+`zc` still opens no connection — your browser does, and you watch it happen.
+GitHub forks the repo to your account when you commit, a validator checks the
+file, and a human merges it. There is no account to make and no token anywhere.
+
+Merged records feed `zc fit` immediately, so your machine improves everyone's
+predictions. They do not move the headline accuracy number above, which is
+computed from `data/calibration/gate.jsonl` — the tier whose provenance is
+known. `zc gate` prints both figures, always.
 
 ## Privacy
 
-Zero network by default. `zc check`, `zc verify`, `zc fit`, `zc gate` and
-`zc doctor` make no outbound connection of any kind; there is no telemetry and
+Zero network by default. `zc check`, `zc verify`, `zc fit`, `zc gate`,
+`zc doctor` and `zc share` make no outbound connection of any kind; there is no telemetry and
 no analytics. `zc verify` writes one line to `data/calibration/local.jsonl` on
 your own disk and nowhere else.
 
+`zc share` is the only command that sends anything anywhere, and it does not do
+the sending: it prints the record, prints a URL containing it, and asks before
+handing that URL to your browser. Nothing is uploaded by `zc` itself, so there
+is no token to leak and nothing to trust us about that you cannot read on your
+own terminal first.
+
 Reports carry no hostname, username, serial number, MAC or IP, and paths are
-rewritten to `~`. Sharing a record is a manual, reviewable step you take by
-opening a PR — never a side effect of running anything.
+rewritten to `~`.
 
 ## Contributing
 
 The highest-value contributions need no Rust:
 
-- **Add your machine.** `zc verify` then open a PR with the one JSON line.
-  Old, slow and unusual hardware is worth more than another fast laptop.
+- **Add your machine.** `zc verify` then `zc share`. Old, slow and unusual
+  hardware is worth more than another fast laptop.
 - **Add a model.** One JSON file in `data/models/`. Nothing else to touch.
 - **Report a bad prediction.** `zc verify` prints predicted vs actual; paste it
   with `zc doctor` output. A prediction that was wrong is data, not a
