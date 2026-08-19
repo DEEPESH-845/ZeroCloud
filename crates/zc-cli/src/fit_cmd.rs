@@ -185,6 +185,21 @@ fn describe_sources(paths: &[std::path::PathBuf]) -> String {
     }
 }
 
+/// The same description, including the records compiled into the binary.
+///
+/// Shared by `zc fit` and `zc gate` because they must not disagree about what
+/// the dataset is. Naming a file that does not exist is worse than naming none:
+/// an installed user has no repository, so a bare `local.jsonl` is a path they
+/// would go looking for — and naming *only* that file while reporting fifteen
+/// records from the shipped set is worse still.
+pub fn describe_dataset(paths: &[std::path::PathBuf]) -> String {
+    if paths.first().is_some_and(|p| p.is_file()) {
+        format!("{}, plus the dataset shipped in this binary", describe_sources(paths))
+    } else {
+        "the dataset shipped in this binary".to_string()
+    }
+}
+
 pub fn run() -> i32 {
     print!("{}", summary_text(&sources()));
     0
@@ -212,12 +227,7 @@ pub fn summary_text(paths: &[std::path::PathBuf]) -> String {
     // installed user has no repo, so `local.jsonl` is a path they would go
     // looking for. The coefficients they see come from the dataset compiled
     // into the binary, plus their own runs once they have any.
-    let source = if paths.first().is_some_and(|p| p.is_file()) {
-        format!("{}, plus the dataset shipped in this binary", describe_sources(paths))
-    } else {
-        "the dataset shipped in this binary".to_string()
-    };
-    let _ = writeln!(o, "== fitted coefficients ==  ({source})\n");
+    let _ = writeln!(o, "== fitted coefficients ==  ({})\n", describe_dataset(paths));
     let _ = writeln!(
         o,
         "  {:<24} {:>7} {:>9} {:>9} {:>9}  confidence",
