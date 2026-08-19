@@ -238,6 +238,47 @@ pub fn best_per_model_indices(rows: &[Row], idx: &[usize]) -> Vec<usize> {
     best
 }
 
+/// How a decode range is written. Shared so the terminal table and the TUI can
+/// never render the same prediction two different ways.
+pub fn fmt_speed(p: &Prediction) -> String {
+    if p.verdict == Verdict::WontFit {
+        "-".to_string()
+    } else {
+        format!("{:.1}-{:.1}", p.decode_tok_s.0, p.decode_tok_s.1)
+    }
+}
+
+pub fn fmt_ctx(p: &Prediction) -> String {
+    if p.max_context == 0 {
+        "-".to_string()
+    } else if p.max_context >= 1024 {
+        format!("{}K", p.max_context / 1024)
+    } else {
+        p.max_context.to_string()
+    }
+}
+
+/// TTFT is unknown until a real run has been measured on this backend. A dash
+/// is honest; a derived number would be wrong by an unknown factor — see
+/// `zc-model::fit::prefill_scale`.
+pub fn fmt_ttft(p: &Prediction) -> String {
+    match p.ttft_s {
+        Some(t) if t < 100.0 => format!("{t:.1}s"),
+        Some(t) => format!("{t:.0}s"),
+        None => "-".to_string(),
+    }
+}
+
+/// Blank when everything is resident: the eye should land on the rows that
+/// spill, and a column of "100%" is noise.
+pub fn fmt_resident(p: &Prediction) -> String {
+    if p.resident_fraction < 0.999 {
+        format!("{:.0}%", p.resident_fraction * 100.0)
+    } else {
+        String::new()
+    }
+}
+
 #[cfg(test)]
 mod width_tests {
     /// A constrained machine lists short model ids, so the table should narrow

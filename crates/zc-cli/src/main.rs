@@ -135,6 +135,8 @@ fn main() {
     // are stripped here with the other globals and never reach the probe.
     let record = take_value(&mut args, "--record");
     let print_only = take_flag(&mut args, "--print");
+    let force_tui = take_flag(&mut args, "--tui");
+    let no_tui = take_flag(&mut args, "--no-tui");
     let cmd = args.first().map(String::as_str).unwrap_or("check");
 
     if matches!(cmd, "-h" | "--help" | "help") {
@@ -164,6 +166,8 @@ fn main() {
         ("--all", show_all),
         ("--record", record.is_some()),
         ("--print", print_only),
+        ("--tui", force_tui),
+        ("--no-tui", no_tui),
     ];
     for (flag, present) in supplied {
         if present && !accepts(cmd, flag) {
@@ -198,6 +202,25 @@ fn main() {
         None
     };
 
+    // The TUI opens only when a human is at both ends of the pipe. Every other
+    // path -- a pipe, a redirect, --json, CI, an agent -- takes the static
+    // renderer and gets exactly what it always got. stdin matters as much as
+    // stdout: raw mode needs a real terminal to read keys from, and `zc < /dev/null`
+    // would otherwise open a screen nobody can drive.
+    let interactive = std::io::IsTerminal::is_terminal(&std::io::stdout())
+        && std::io::IsTerminal::is_terminal(&std::io::stdin())
+        && !as_json
+        && !no_tui
+        && !std::env::var("TERM").is_ok_and(|t| t == "dumb");
+    // Requested and impossible is an error, never a silent downgrade -- the
+    // standing rule about substituting a fallback for the thing that was asked
+    // for applies to the interface as much as to a measurement.
+    if force_tui && !interactive {
+        eprintln!("--tui needs an interactive terminal on both stdin and stdout");
+        std::process::exit(2);
+    }
+    let tui = cmd == "check" && interactive;
+
     // Both subcommands need the same measured facts, and measuring twice could
     // give two different answers if thermal state shifted between them.
     let m = machine::probe();
@@ -207,7 +230,7 @@ fn main() {
     let code = match runtime {
         Some(rt) => verify::run(&m, rt.as_ref(), &fit, kv, args.get(1).map(String::as_str)),
         None if cmd == "doctor" => doctor::run(&m, &fit, kv),
-        None => check::run(&m, &fit, kv, top, show_all, as_json),
+        None => check::run(&m, &fit, kv, top, show_all, as_json, tui),
     };
     std::process::exit(code);
 }
@@ -220,7 +243,7 @@ fn main() {
 /// accept it in silence.
 fn accepts(cmd: &str, flag: &str) -> bool {
     let ok: &[&str] = match cmd {
-        "check" => &["--json", "--kv", "--top", "--all"],
+        "check" => &["--json", "--kv", "--top", "--all", "--tui", "--no-tui"],
         "verify" => &["--runtime", "--kv"],
         "doctor" => &["--kv"],
         "share" => &["--record", "--print"],
