@@ -35,6 +35,29 @@ fn paint(padded: &str, code: &str, on: bool) -> String {
     }
 }
 
+
+/// One line if it fits 80 columns, otherwise the variable-length head on a
+/// line of its own with the rest indented under it.
+///
+/// The head here is a CPU brand or a GPU name, and those are the strings this
+/// project cannot bound: "Apple M5" is eight characters and
+/// "Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz" is forty-five. CI found the
+/// hardware line at 104 columns on a runner while it measured 67 here.
+fn pair(head: &str, tail: &str) -> Vec<String> {
+    let one = format!("  {head}   {tail}");
+    if one.chars().count() <= crate::TABLE_WIDTH {
+        vec![one]
+    } else {
+        vec![format!("  {head}"), format!("      {tail}")]
+    }
+}
+
+fn push_pair(p: &mut String, head: &str, tail: &str) {
+    for l in pair(head, tail) {
+        push(p, &l);
+    }
+}
+
 pub fn render(r: &Report) -> String {
     render_with(r, colors_enabled())
 }
@@ -44,11 +67,11 @@ pub fn render_with(r: &Report, color: bool) -> String {
     let p = &mut o;
 
     push(p, "== hardware ==");
-    push(
+    push_pair(
         p,
+        &r.cpu.brand,
         &format!(
-            "  {}   {}P+{}E   {} total / {} available{}",
-            r.cpu.brand,
+            "{}P+{}E   {} total / {} available{}",
             r.cpu.p_cores,
             r.cpu.e_cores,
             human(r.mem.total),
@@ -56,20 +79,21 @@ pub fn render_with(r: &Report, color: bool) -> String {
             if r.mem.unified { "   unified" } else { "" }
         ),
     );
-    push(
-        p,
-        &format!(
-            "  {} on {} ({}){}",
-            r.storage.mount.display(),
-            r.storage.fstype,
-            r.storage.medium,
-            if r.storage.bench_file.is_some() && !r.storage.bench_is_weight {
-                "   [benchmarked against a non-model file on the same volume]"
-            } else {
-                ""
-            }
-        ),
+    let mount = format!(
+        "{} on {} ({})",
+        r.storage.mount.display(),
+        r.storage.fstype,
+        r.storage.medium
     );
+    if r.storage.bench_file.is_some() && !r.storage.bench_is_weight {
+        push_pair(
+            p,
+            &mount,
+            "[benchmarked against a non-model file on the same volume]",
+        );
+    } else {
+        push(p, &format!("  {mount}"));
+    }
 
     for g in r.gpus {
         let count = if g.count > 1 {
@@ -77,25 +101,21 @@ pub fn render_with(r: &Report, color: bool) -> String {
         } else {
             String::new()
         };
-        push(
+        push_pair(
             p,
-            &format!(
-                "  {}{}   {}",
-                g.name,
-                count,
-                if g.integrated {
-                    // Says nothing about VRAM on purpose: an integrated GPU has
-                    // none of its own, and Windows' "shared system memory"
-                    // figure is memory it takes from the CPU, not memory it adds.
-                    "integrated (shares system memory)".to_string()
-                } else {
-                    format!(
-                        "{} VRAM   ~{:.0} GB/s (looked up, not measured)",
-                        human(g.vram_bytes),
-                        g.bw_gbs
-                    )
-                }
-            ),
+            &format!("{}{}", g.name, count),
+            &if g.integrated {
+                // Says nothing about VRAM on purpose: an integrated GPU has
+                // none of its own, and Windows' "shared system memory"
+                // figure is memory it takes from the CPU, not memory it adds.
+                "integrated (shares system memory)".to_string()
+            } else {
+                format!(
+                    "{} VRAM   ~{:.0} GB/s (looked up, not measured)",
+                    human(g.vram_bytes),
+                    g.bw_gbs
+                )
+            },
         );
     }
 
@@ -274,11 +294,14 @@ pub fn render_with(r: &Report, color: bool) -> String {
         );
     }
 
-    for h in &r.storage.hazards {
-        push(p, &format!("\n  !  {h}"));
-    }
-    if let Some(w) = &r.env.warning {
-        push(p, &format!("\n  !  {w}"));
+    // Hazards and the environment warning are prose written for a human, and
+    // neither has a bounded length -- a WSL memory-ceiling warning names a
+    // path. Wrapped, with the continuation indented under the marker.
+    for h in r.storage.hazards.iter().map(|h| h.to_string()).chain(r.env.warning.clone()) {
+        push(p, "");
+        for (i, l) in crate::wrap(&h, crate::TABLE_WIDTH - 5, 0).iter().enumerate() {
+            push(p, &format!("{}{l}", if i == 0 { "  !  " } else { "     " }));
+        }
     }
 
     o
@@ -300,18 +323,129 @@ fn backend_label(b: Backend) -> &'static str {
 /// row. Padding after the last visible character breaks copy-paste out of a
 /// terminal and shows up as whitespace noise in any report pasted into an
 /// issue.
+/// Columns a string occupies on screen, ignoring colour escapes.
+///
+/// `paint` wraps a cell in `\x1b[..m ... \x1b[0m`, which is nine bytes the
+/// terminal never draws. Counting them would wrap a row that fits.
+fn visible_len(s: &str) -> usize {
+    let mut n = 0;
+    let mut in_esc = false;
+    for c in s.chars() {
+        if in_esc {
+            in_esc = c != 'm';
+        } else if c == '\x1b' {
+            in_esc = true;
+        } else {
+            n += 1;
+        }
+    }
+    n
+}
+
+/// Every line of this renderer's output goes through here, so this is the one
+/// place that can guarantee the 80-column contract rather than hope for it.
+///
+/// Two CI failures on machines that could not be reproduced locally came from
+/// a line nobody thought to bound — a Xeon brand name, a time-to-first-token
+/// in five digits. Each was fixed at its source, and each was found by a user
+/// (here, a runner) rather than a test. This is the backstop: anything still
+/// too wide is wrapped at a word boundary with a hanging indent, which is
+/// strictly better than letting the terminal hard-wrap it mid-word.
 fn push(out: &mut String, line: &str) {
     for (i, l) in line.split('\n').enumerate() {
         if i > 0 {
             out.push('\n');
         }
-        out.push_str(l.trim_end());
+        let l = l.trim_end();
+        if visible_len(l) <= crate::TABLE_WIDTH {
+            out.push_str(l);
+            continue;
+        }
+        // Preserve the line's own indent so a wrapped row still lines up.
+        let indent = l.len() - l.trim_start().len();
+        let hang = " ".repeat(indent + 2);
+        for (j, part) in crate::wrap(l.trim_start(), crate::TABLE_WIDTH - indent - 2, 0)
+            .iter()
+            .enumerate()
+        {
+            if j > 0 {
+                out.push('\n');
+                out.push_str(&hang);
+            } else {
+                out.push_str(&" ".repeat(indent));
+            }
+            out.push_str(part);
+        }
     }
     out.push('\n');
 }
 
 #[cfg(test)]
 mod tests {
+    /// The strings this project cannot bound are the CPU brand and the GPU
+    /// name. "Apple M5" is eight characters; the Xeon in a GitHub runner is
+    /// forty-five. The hardware line measured 67 columns here and 104 there,
+    /// and no local run could have shown it.
+    #[test]
+    fn a_long_cpu_brand_does_not_overrun_the_line() {
+        let tail = "4P+0E   16.00 GiB total / 15.00 GiB available";
+        for head in [
+            "Apple M5",
+            "Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz",
+            "AMD EPYC 7763 64-Core Processor with an implausibly long marketing name",
+        ] {
+            for l in super::pair(head, tail) {
+                assert!(
+                    l.chars().count() <= crate::TABLE_WIDTH,
+                    "{} columns: {l}",
+                    l.chars().count()
+                );
+            }
+        }
+    }
+
+    /// A short head still gets one line — the split is a fallback, not the
+    /// default.
+    #[test]
+    fn a_short_head_stays_on_one_line() {
+        assert_eq!(super::pair("Apple M5", "4P+6E   16.00 GiB total").len(), 1);
+        assert_eq!(
+            super::pair(
+                "Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz",
+                "4P+0E   16.00 GiB total / 15.00 GiB available"
+            )
+            .len(),
+            2
+        );
+    }
+
+    /// The backstop. Anything that slips past a per-line fix still cannot
+    /// reach a terminal wider than 80 columns.
+    #[test]
+    fn push_wraps_a_line_nothing_else_bounded() {
+        let mut o = String::new();
+        super::push(&mut o, &format!("  {}", "word ".repeat(40)));
+        for l in o.lines() {
+            assert!(l.chars().count() <= crate::TABLE_WIDTH, "{}: {l}", l.chars().count());
+        }
+        assert!(o.lines().count() > 1);
+    }
+
+    /// Colour escapes are bytes the terminal never draws, so they must not
+    /// count towards the width -- otherwise a coloured row that fits gets
+    /// wrapped for characters nobody can see.
+    #[test]
+    fn colour_escapes_do_not_count_towards_the_width() {
+        let painted = super::paint(&format!("{:<4}", "OK"), super::GREEN, true);
+        assert!(painted.chars().count() > 4, "the escapes are really there");
+        assert_eq!(super::visible_len(&painted), 4);
+        let row = format!("  {painted} {}", "x".repeat(70));
+        assert_eq!(super::visible_len(&row), 2 + 4 + 1 + 70);
+        let mut o = String::new();
+        super::push(&mut o, &row);
+        assert_eq!(o.lines().count(), 1, "77 visible columns must not wrap");
+    }
+
     /// Colour must never change a column's width. `format!("{:<4}")` counts the
     /// five bytes of an escape sequence as characters, so painting *before*
     /// padding shortens the visible cell and walks every column to its right
