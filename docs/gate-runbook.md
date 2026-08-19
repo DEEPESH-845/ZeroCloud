@@ -120,12 +120,17 @@ Two numbers matter, and the second is the one that can hurt:
 - **median error < 25%** — the stated gate.
 - **`within_range`** — the published promise is a range, not a point.
 
-Both records measured so far missed their range, both in the same direction: we
-predict *slower* than reality. The retired 2026-08-16 record implied eta 0.859
-against an assumed 0.616; the 2026-08-17 replacement implied 0.922. `zc fit` has
-since moved the Metal/k_quant bucket to 0.922 from that one record, which is the
-correct mechanism — but one record is `low` confidence and the bucket needs runs
-from other machines before that number means anything.
+**Answered, 2026-08-19.** The early records missed their range in the same
+direction — we predicted *slower* than reality, implied eta 0.859 then 0.922
+against an assumed 0.616 — and `zc fit` moved Metal/k_quant to 0.922 from that
+one record. Two fresh runs then tested that fitted number out of sample and both
+landed inside the range: 0.888 and 0.863. So the width mechanism is sound, and a
+`within_range` figure that includes predictions made against the shipped prior is
+lagging rather than damning. No coverage factor was changed.
+
+The bucket is still `low` confidence, and now for the right reason: three runs,
+**one machine**. The tier counts distinct machines, so repeat runs here sharpen
+eta and can never narrow the published range on their own.
 
 If the median passes but `within_range` stays low, the midpoint is right and the
 published *width* is wrong. That is a coverage-factor and confidence-tier problem
