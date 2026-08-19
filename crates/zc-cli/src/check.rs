@@ -128,3 +128,26 @@ pub fn run(
     }
     0
 }
+
+/// `zc check <hf-repo-id>` — a model the catalog does not have.
+///
+/// Prints the same measured hardware block as `zc check`, then what the
+/// repository's own metadata implies about memory. No decode speed: see
+/// `hf.rs` for why that is a refusal rather than an omission.
+pub fn run_hf(m: &Machine, kv: KvPrecision, repo: &str) -> i32 {
+    let fetched = match crate::hf::fetch_model(repo) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("{e}");
+            return 1;
+        }
+    };
+    // The hardware block, so the budget the verdict uses is on screen with it.
+    let empty = report(m, &Fit::default(), kv, Vec::new(), 0);
+    print!("{}", zc_report::text::render(&empty));
+    print!(
+        "{}",
+        crate::hf::render(&fetched, m.budget_idle, kv, UBATCH)
+    );
+    0
+}
