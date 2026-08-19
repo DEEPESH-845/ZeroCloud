@@ -3,6 +3,8 @@ name = "zc-probe"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+description = "Hardware detection for local LLM capacity planning: cores, memory, GPUs, storage and virtualisation."
+repository.workspace = true
 
 [dependencies]
 # Only pulled in on Unix. Cargo evaluates these cfg predicates at build time,

@@ -28,7 +28,7 @@ for t in "${TARGETS[@]}"; do
 done
 
 echo "== calibration =="
-# The same script CI runs on every pull request touching data/calibration.
+# The same script CI runs on every pull request touching crates/zc-model/data/calibration.
 # Self-test first: a validator whose own fixtures fail would fail open.
 python3 scripts/validate_calibration.py --self-test
 python3 scripts/validate_calibration.py

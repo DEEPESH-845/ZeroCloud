@@ -14,6 +14,6 @@ e.g. `Qwen/Qwen3-4B` -- the repo whose `config.json` has the geometry.
 e.g. Q4_K_M, Q8_0.
 
 <!--
-Adding a model yourself is one JSON file in data/models/ and no Rust:
+Adding a model yourself is one JSON file in crates/zc-model/data/models/ and no Rust:
 see CONTRIBUTING.md. It is usually faster than waiting for this issue.
 -->

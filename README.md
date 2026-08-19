@@ -139,7 +139,7 @@ max_ctx  = (usable − weights − compute_buffers) / kv_bytes_per_token
 ```
 
 `η` is the one term that cannot be derived. It comes from real measured runs —
-which is what `zc verify` collects and what `data/calibration/gate.jsonl` holds.
+which is what `zc verify` collects and what `crates/zc-model/data/calibration/gate.jsonl` holds.
 
 ## Every number is checkable
 
@@ -239,7 +239,7 @@ before opening it:
 
   not in it: hostname, username, serial number, MAC, IP, file paths
 
-  lands at      data/calibration/community/8bc574063a10f63c-921a62a1.jsonl
+  lands at      crates/zc-model/data/calibration/community/8bc574063a10f63c-921a62a1.jsonl
   open in browser? [y/N]
 ```
 
@@ -249,7 +249,7 @@ file, and a human merges it. There is no account to make and no token anywhere.
 
 Merged records feed `zc fit` immediately, so your machine improves everyone's
 predictions. They do not move the headline accuracy number above, which is
-computed from `data/calibration/gate.jsonl` — the tier whose provenance is
+computed from `crates/zc-model/data/calibration/gate.jsonl` — the tier whose provenance is
 known. `zc gate` prints both figures, always.
 
 ## Privacy
@@ -274,7 +274,7 @@ The highest-value contributions need no Rust:
 
 - **Add your machine.** `zc verify` then `zc share`. Old, slow and unusual
   hardware is worth more than another fast laptop.
-- **Add a model.** One JSON file in `data/models/`. Nothing else to touch.
+- **Add a model.** One JSON file in `crates/zc-model/data/models/`. Nothing else to touch.
 - **Report a bad prediction.** `zc verify` prints predicted vs actual; paste it
   with `zc doctor` output. A prediction that was wrong is data, not a
   complaint.

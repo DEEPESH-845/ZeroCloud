@@ -89,11 +89,18 @@ pub fn parse_model(src: &str) -> Option<ModelSpec> {
 /// makes an *installed* binary extensible — `data/models` is relative to the
 /// working directory and does not exist for someone who installed a release,
 /// so without it "add your own model" means "clone and rebuild".
+/// The catalog inside a checkout, relative to the repository root.
+///
+/// It lives under the crate rather than at the repo root so that `cargo
+/// package` can see it: a published `.crate` contains only its own directory,
+/// and `build.rs` embeds these files at compile time. See docs/publishing.md.
+pub const REPO_MODELS: &str = "crates/zc-model/data/models";
+
 pub fn search_dirs() -> Vec<std::path::PathBuf> {
     if let Ok(d) = std::env::var("ZC_DATA_DIR") {
         return vec![std::path::PathBuf::from(d)];
     }
-    let mut dirs = vec![std::path::PathBuf::from("data/models")];
+    let mut dirs = vec![std::path::PathBuf::from(REPO_MODELS)];
     if let Some(cfg) = user_config_dir() {
         dirs.push(cfg.join("zerocloud").join("models"));
     }
