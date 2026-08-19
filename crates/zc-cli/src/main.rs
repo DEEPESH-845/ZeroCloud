@@ -21,7 +21,8 @@ USAGE
     zc doctor             everything probed, measured and concluded, as Markdown
     zc --help
 
-Both commands run a ~20s hardware benchmark first. Nothing leaves this
+Both commands benchmark the hardware first: ~2s on a fast laptop, longer
+where the disk is slow. Nothing leaves this
 machine; `zc verify` writes only to data/calibration/local.jsonl.
 
 zc check
@@ -165,7 +166,7 @@ fn main() {
     }
 
     // Fail before benchmarking, not after: a user without a runtime should not
-    // wait 20 seconds to be told to install one.
+    // sit through the benchmark only to be told to install one.
     let runtime = if cmd == "verify" {
         match verify::precheck(runtime.as_deref()) {
             Ok(rt) => Some(rt),

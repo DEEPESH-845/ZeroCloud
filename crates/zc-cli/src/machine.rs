@@ -1,7 +1,7 @@
 //! Probe + benchmark the host once, and hand the result to any subcommand.
 //!
 //! Both `check` and `verify` need identical hardware facts. Measuring twice
-//! would waste ~20 seconds and, worse, could produce two different answers if
+//! would waste a second or two and, worse, could produce two different answers if
 //! thermal state shifted between them — which would make a calibration record
 //! disagree with the prediction it is supposed to be calibrating.
 

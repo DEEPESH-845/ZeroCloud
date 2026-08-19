@@ -17,8 +17,8 @@ const NUM_CTX: u32 = 4096;
 /// for the same prompt we are about to send.
 const PROMPT_TOKENS: u32 = 1200;
 
-/// Confirm a usable runtime is reachable *before* the caller spends 20 seconds
-/// benchmarking. Telling a user to install Ollama after making them wait is a
+/// Confirm a usable runtime is reachable *before* the caller sits through the
+/// benchmark. Telling a user to install Ollama after making them wait is a
 /// small cruelty that costs nothing to avoid.
 ///
 /// "Usable" is narrower than "present": a runtime that cannot report its own
