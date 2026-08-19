@@ -7,7 +7,7 @@
 //! exists to make impossible.
 
 use zc_model::gate::{Gate, MAX_MEDIAN_ERROR_PCT, MIN_MACHINES};
-use zc_model::{fit::parse_records, Fit};
+use zc_model::{fit::all_records, Fit};
 
 /// Non-zero when the gate is not met, so CI and scripts can depend on it.
 const FAILED: i32 = 1;
@@ -19,8 +19,12 @@ pub fn run() -> i32 {
     // can hold merged community submissions while `gate.jsonl` is absent, and
     // the old `read_to_string` form would have taken this exit while sitting on
     // perfectly good evidence.
-    let text = crate::fit_cmd::read_text(std::slice::from_ref(&curated));
-    if text.trim().is_empty() {
+    // Against the dataset compiled into this binary, not just the file on disk:
+    // an installed user has no repository, and a gate that ignored the shipped
+    // records reported `1 of 5 machines` while `zc fit` one line earlier was
+    // reading eleven runs.
+    let records = all_records(&crate::fit_cmd::read_text(std::slice::from_ref(&curated)));
+    if records.is_empty() {
         println!("No calibration data at {}.\n", curated.display());
         println!("The Phase 0 gate is: median decode error < {MAX_MEDIAN_ERROR_PCT:.0}% across >= {MIN_MACHINES} machines.");
         println!("Nothing has been measured, so it is unmeasurable — not failed, unknown.\n");
@@ -28,10 +32,12 @@ pub fn run() -> i32 {
         return FAILED;
     }
 
-    let records = parse_records(&text);
     let g = Gate::from_records(&records);
 
-    println!("== phase 0 gate ==  ({})\n", curated.display());
+    println!(
+        "== phase 0 gate ==  ({})\n",
+        crate::fit_cmd::describe_dataset(std::slice::from_ref(&curated))
+    );
     println!(
         "  {} runs on {} machine(s){}",
         g.runs,
@@ -71,7 +77,7 @@ pub fn run() -> i32 {
     // can state. Printing both, always, is what stops that reading as
     // cherry-picking.
     if all.len() > 1 {
-        let g_all = Gate::from_records(&parse_records(&crate::fit_cmd::read_text(&all)));
+        let g_all = Gate::from_records(&all_records(&crate::fit_cmd::read_text(&all)));
         println!(
             "  {:<32}{:>8.1}%   over {} machine(s)",
             format!("with {} community record(s)", all.len() - 1),

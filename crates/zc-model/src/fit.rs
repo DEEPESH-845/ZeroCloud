@@ -192,6 +192,22 @@ fn empirical_spread(vals: &[f64], centre: f64) -> f64 {
     dev[rank - 1]
 }
 
+/// Every record this binary knows about: the dataset compiled in, plus `local`,
+/// with exact duplicate lines dropped.
+///
+/// The single entry point for "what is the dataset", because having two was a
+/// bug: `zc fit` merged the embedded records and `zc gate` did not, so an
+/// installed user saw coefficients backed by eleven runs and, one line later, a
+/// gate reporting `1 runs on 1 machine(s)` and `BLOCKED 1 of 5 machines`. The
+/// README invites anyone to recompute the published accuracy figure with
+/// `zc gate`; for everyone who had not cloned the repository, it could not.
+///
+/// Inside a checkout the file on disk *is* the embedded file, and the dedupe is
+/// what stops every shipped run being counted twice.
+pub fn all_records(local: &str) -> Vec<Record> {
+    parse_records(&merge(&embedded(), local))
+}
+
 pub fn parse_record(line: &str) -> Option<Record> {
     let quant = json::string(line, "quant")?;
     Some(Record {
@@ -402,7 +418,7 @@ impl Fit {
     /// Fit from already-concatenated records, so a caller assembling several
     /// files does not have to make `fit` care how many there are.
     pub fn from_text(local: &str) -> Self {
-        Self::from_records(&parse_records(&merge(&embedded(), local)))
+        Self::from_records(&all_records(local))
     }
 
     pub fn load(path: &std::path::Path) -> Self {
@@ -494,6 +510,24 @@ mod tests {
     /// The binary must not ship an empty dataset. If the calibration file is
     /// ever emptied or moved, every installed `zc` silently reverts to priors,
     /// and nothing else in the test suite would notice.
+    /// The gate an installed user sees must be the gate the README publishes.
+    ///
+    /// `zc fit` merged the embedded dataset and `zc gate` did not, so someone who
+    /// installed the binary saw coefficients backed by eleven runs and, one line
+    /// later, `1 runs on 1 machine(s)` and `BLOCKED 1 of 5 machines`. The README
+    /// invites anyone to recompute the published accuracy figure themselves; for
+    /// everyone who had not cloned the repository, it could not be done.
+    #[test]
+    fn the_gate_an_installed_user_sees_is_the_published_gate() {
+        let g = crate::Gate::from_records(&super::all_records(""));
+        assert!(
+            g.machines.len() >= 5,
+            "a binary with no local records must still report the shipped machines, got {}",
+            g.machines.len()
+        );
+        assert!(g.runs >= 8, "only {} runs reached the gate", g.runs);
+    }
+
     /// The community tier is embedded too, so a merged submission reaches the
     /// next release's users rather than only the repository.
     #[test]
