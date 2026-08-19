@@ -102,7 +102,7 @@ def main():
     check("a near-miss command suggests the real one", rc == 2 and "check" in err)
 
     # -- 80 columns, on every human-facing surface ---------------------------
-    for args in (["check", "--all"], ["--help"], ["fit"]):
+    for args in (["check", "--all"], ["check"], ["--help"], ["fit"], ["gate"]):
         rc, out, _ = run(*args)
         wide = [l for l in out.splitlines() if len(l) > 80]
         check(f"`zc {' '.join(args)}` fits 80 columns", not wide, f"{len(wide)} over")

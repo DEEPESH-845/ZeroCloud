@@ -198,55 +198,57 @@ pub fn render_with(r: &Report, color: bool) -> String {
             "  no calibration data yet - ranges are wide priors. Run `zc verify`.",
         );
     }
-    // Width follows the rows actually shown. Fixed at 28 this table ran to 93
-    // columns on any row that spills to disk -- which is the row a low-end
-    // machine shows, so it wrapped hardest on the hardware this tool is for.
-    let mw = crate::model_col_width(&r.models);
-    push(
-        p,
-        &format!(
-            "  {:<4} {:<mw$} {:<7} {:>11} {:>5} {:>5} {:<6} {:>4}",
-            "", "model", "quant", "decode t/s", "ctx", "TTFT", "conf", "%RAM"
-        ),
-    );
+    // Widths follow the data, not a constant. Fixed widths were measured on
+    // one Apple Silicon laptop and CI on a CPU-only runner overflowed them: no
+    // GPU means a 70B streaming off disk reports a TTFT in the thousands of
+    // seconds, which is wider than any field this machine ever asked for.
+    let cells: Vec<(String, String, String, String, String, String, String)> = r
+        .models
+        .iter()
+        .map(|row| {
+            let pr = &row.prediction;
+            (
+                row.model_id.to_string(),
+                row.quant.name.clone(),
+                crate::fmt_speed(pr),
+                crate::fmt_ctx(pr),
+                crate::fmt_ttft(pr),
+                pr.confidence.label().to_string(),
+                crate::fmt_resident(pr),
+            )
+        })
+        .collect();
+    let refs: Vec<(&str, &str, &str, &str, &str, &str, &str)> = cells
+        .iter()
+        .map(|c| {
+            (
+                c.0.as_str(),
+                c.1.as_str(),
+                c.2.as_str(),
+                c.3.as_str(),
+                c.4.as_str(),
+                c.5.as_str(),
+                c.6.as_str(),
+            )
+        })
+        .collect();
+    let cols = crate::TableCols::for_rows(&refs);
+    push(p, &cols.header());
 
-    for row in &r.models {
-        let pr = &row.prediction;
+    for (row, c) in r.models.iter().zip(cells.iter()) {
         // The verdict is the one cell the eye should find without reading, so
         // it is the only thing coloured. Painting more would make the table
         // louder without making it faster to scan.
-        let (mark, hue) = match pr.verdict {
+        let (mark, hue) = match row.prediction.verdict {
             Verdict::Good => ("OK", GREEN),
             Verdict::Usable => ("ok", GREEN),
             Verdict::Slow => ("SLOW", YELLOW),
             Verdict::WontFit => ("XX", RED),
         };
         let mark = paint(&format!("{mark:<4}"), hue, color);
-        // Shared with the TUI so one prediction cannot render two ways.
-        let ctx = crate::fmt_ctx(pr);
-        let speed = crate::fmt_speed(pr);
-        let ttft = crate::fmt_ttft(pr);
         push(
             p,
-            &format!(
-                "  {} {:<mw$} {:<7} {:>11} {:>5} {:>5} {:<6} {:>4}",
-                mark,
-                row.model_id,
-                row.quant.name,
-                speed,
-                ctx,
-                ttft,
-                pr.confidence.label(),
-                // A column rather than a sentence. "  89% resident" cost 14
-                // columns and pushed a spilling row to 93; "89%" under a %RAM
-                // header says the same thing in four and fits at any model
-                // width the catalog can produce.
-                //
-                // Blank rather than "100%" when everything is resident: the
-                // eye should land on the rows that spill, and `push` trims the
-                // trailing space so a full row still ends where it stops.
-                crate::fmt_resident(pr)
-            ),
+            &cols.row(&mark, &c.0, &c.1, &c.2, &c.3, &c.4, &c.5, &c.6),
         );
     }
 
