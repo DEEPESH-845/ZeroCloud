@@ -116,9 +116,9 @@ zc doctor  # everything probed and concluded, as Markdown for a bug report
 
 | | |
 |---|---|
-| median error, per machine | **7.1%** |
-| machines | 7 (6 hypervisor, 1 bare metal), 11 runs |
-| measurement landed inside the published range | 54.5% |
+| median error, per machine | **6.3%** |
+| machines | 8 (7 hypervisor, 1 bare metal), 14 runs |
+| measurement landed inside the published range | 64.3% |
 
 This is **pre-1.0, and the Phase 0 gate has not passed.** The gate is median
 error under 25% across at least 5 machines *including 2 on bare metal*. The
@@ -148,10 +148,12 @@ constant to compensate for it, and it moved the CPU range from ±45% to ±78% �
 which is the honest answer: predicting CPU decode inside a VM is imprecise, and
 the range now says so. The Metal backend, on real hardware, is unchanged.
 
-The 54.5% above is a *lagging* figure: every one of those predictions was made
-with the old width, and `within_range` is recorded at prediction time so the
-number can only be corrected by new records. Whether the fix works is therefore
-measured, not asserted, and the next machines will say.
+The 64.3% above is still a *lagging* figure — `within_range` is recorded at
+prediction time, so most of those predictions were made with the old width and
+no edit can change them. The three records taken *after* the fix all landed
+inside their range, including the pathological macOS VM that missed by 254%.
+Three points is not proof, but it is the right direction, and the figure will
+keep being measured rather than asserted.
 
 One machine (a macOS VM) is missing by 287% and is not being hidden: it is in
 the dataset, dragging the number down, until somebody understands why. Ranges
