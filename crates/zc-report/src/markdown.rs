@@ -129,13 +129,24 @@ pub fn render(r: &Report, fit_summary: &str) -> String {
             line(
                 p,
                 &format!(
-                    "| {} | {} | {} | {} | {} | {:.0} GB/s (looked up) |",
+                    "| {} | {} | {} | {} | {} | {} |",
                     g.name,
                     human(g.vram_bytes),
                     g.integrated,
                     g.count,
                     g.source,
-                    g.bw_gbs
+                    // An integrated GPU has no VRAM of its own, so it has no
+                    // VRAM bandwidth either -- it reads system memory at the
+                    // rate zc-bench measured. Printing the family-table figure
+                    // here put a fabricated number in the one artifact whose
+                    // whole job is to be trustworthy in a bug report, and
+                    // disagreed with `zc check`, which has always said
+                    // "shares system memory" instead.
+                    if g.integrated {
+                        "- (shares system memory)".to_string()
+                    } else {
+                        format!("{:.0} GB/s (looked up)", g.bw_gbs)
+                    }
                 ),
             );
         }
