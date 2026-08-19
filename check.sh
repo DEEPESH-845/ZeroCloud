@@ -58,4 +58,33 @@ if ZC_VERSION='https://github.com/x/releases' ZC_DRY_RUN=1 sh install.sh >/dev/n
 fi
 echo "rejects a URL-shaped tag"
 
+echo "== non-tty output =="
+# The TUI is default-on for a human. Everything else -- a pipe, a redirect,
+# --json, CI, an agent -- must still get the plain renderer. These run piped,
+# so if a TUI escape sequence ever reaches stdout it fails right here.
+cargo build --release --quiet
+if ./target/release/zc check --top 3 2>/dev/null | grep -q "$(printf '\033')"; then
+  echo "escape sequences leaked into piped stdout"; exit 1
+fi
+./target/release/zc check --json 2>/dev/null | python3 -m json.tool >/dev/null \
+  || { echo "--json is not valid JSON"; exit 1; }
+# Progress writes to stderr and only on a terminal; piped it must be silent.
+if [ -s /dev/stdin ] 2>/dev/null; then :; fi
+if [ "$(./target/release/zc check --top 1 2>&1 >/dev/null | wc -c)" -ne 0 ]; then
+  echo "progress wrote to a non-tty stderr"; exit 1
+fi
+# --tui with nowhere to draw is an error, never a silent downgrade.
+if ./target/release/zc check --tui </dev/null >/dev/null 2>&1; then
+  echo "--tui succeeded without a terminal"; exit 1
+fi
+# No line of `zc check` may exceed 80 columns -- the table wrapped hardest on
+# the low-end machines this tool is for.
+if ./target/release/zc check --all 2>/dev/null | awk 'length>80' | grep -q .; then
+  echo "a row ran past 80 columns"; exit 1
+fi
+if ./target/release/zc --help | awk 'length>80' | grep -q .; then
+  echo "a help line ran past 80 columns"; exit 1
+fi
+echo "plain when piped, silent stderr, 80 columns"
+
 echo "OK"
