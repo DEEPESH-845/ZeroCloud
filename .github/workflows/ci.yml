@@ -39,6 +39,11 @@ jobs:
       - run: rustup component add clippy
       - run: cargo test --workspace
       - run: cargo clippy --workspace --all-targets -- -D warnings
+      # The non-terminal promises, on every OS. Windows is the primary target
+      # market and the platform whose paths VERIFICATION.md records as least
+      # exercised; check.sh is bash and cannot run there, so this does.
+      - run: cargo build --release
+      - run: python3 scripts/contract_smoke.py target/release/zc
 
   # The catalog and the calibration dataset are the community contribution
   # surface, so a malformed file from a first-time contributor must fail here

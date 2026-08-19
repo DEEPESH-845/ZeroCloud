@@ -627,7 +627,7 @@ product is for.
 
 | Item | Status |
 |---|---|
-| The TUI on Windows | Never executed. crossterm owns that layer, which is the reason it is a dependency rather than hand-written, but nobody has run it. `tui_smoke.py` skips there — no `fcntl`/`termios` |
+| The interactive TUI on Windows | Never executed. crossterm owns raw mode, key events and resize there, which is the reason it is a dependency rather than hand-written, but nobody has pressed a key. `tui_smoke.py` needs a pty and skips on Windows. **What CI does now run on `windows-latest`:** all 210 unit tests, including every `zc-tui` state and frame test, plus `scripts/contract_smoke.py` — 22 assertions covering the non-terminal promises. A Windows ConPTY driver was deliberately not written: it would be a second unvalidated cross-platform path added blind, which is how the bug in row 15 of this document survived for days |
 | The TUI on Linux | Now driven by `scripts/tui_smoke.py` in CI on `ubuntu-latest`. Not yet seen by a human on real Linux hardware |
 | Legacy `conhost` charset detection | Falls back to ASCII by design (no `TERM`, no `WT_SESSION`), unverified on real hardware |
 | Behaviour on a terminal narrower than 40 columns in the TUI | Message is printed; not seen on real hardware |
