@@ -110,9 +110,9 @@ zc doctor  # everything probed and concluded, as Markdown for a bug report
 
 | | |
 |---|---|
-| median error, per machine | **22.7%** |
-| machines | 6 (5 hypervisor, 1 bare metal) |
-| measurement landed inside the published range | 50% |
+| median error, per machine | **9.6%** |
+| machines | 6 (5 hypervisor, 1 bare metal), 8 runs |
+| measurement landed inside the published range | 62.5% |
 
 This is **pre-1.0 and the Phase 0 gate has not passed yet.** The gate is median
 error under 25% across at least 5 machines *including 2 on bare metal*, and
