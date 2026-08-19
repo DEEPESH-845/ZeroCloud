@@ -12,17 +12,42 @@ another fast laptop.
 ```sh
 ollama pull qwen3:1.7b      # or llama.cpp / LM Studio, any model you already have
 zc verify
+zc share
 ```
 
-That prints predicted vs actual and appends one JSON line to
-`data/calibration/local.jsonl`. Open a PR that appends that line to
-`data/calibration/gate.jsonl`.
+`zc verify` prints predicted vs actual and appends one JSON line to
+`data/calibration/local.jsonl`, on your disk and nowhere else. `zc share` then
+shows you that line field by field, tells you what is not in it, and builds a
+GitHub URL with the record prefilled — asking before it hands that URL to your
+browser. `zc` opens no connection itself; your browser does, and you watch it.
+`zc share --print` gives you the URL without the prompt.
 
-Before you do, read the line. It contains your hardware fingerprint (a hash),
-OS, virtualization kind, measured bandwidths, the model and quantisation, and
-the prediction that was made *before* the run. It contains no hostname,
-username, serial, MAC, IP or file path. If you would rather not publish your
-bandwidth figures, that is a completely reasonable choice — do not open the PR.
+Committing through GitHub's editor forks the repository to your account and
+offers the pull request button. The file lands in `data/calibration/community/`
+under a name derived from its own contents, so resubmitting the same run is an
+empty diff rather than a second PR.
+
+Read the record before you send it. It contains your hardware fingerprint (a
+hash), OS, virtualization kind, measured bandwidths, the model and
+quantisation, and the prediction that was made *before* the run. It contains no
+hostname, username, serial, MAC, IP or file path. If you would rather not
+publish your bandwidth figures, that is a completely reasonable choice — say no
+at the prompt.
+
+You can run the same check CI runs, before opening anything:
+
+```sh
+python3 scripts/validate_calibration.py
+```
+
+It recomputes `error_pct` and `within_range` from the record's own numbers, so
+a record that disagrees with itself fails here rather than in review.
+
+Merged records feed `zc fit` straight away, which is what makes your machine
+improve everyone's predictions. They do not move the headline accuracy figure —
+that is computed from `data/calibration/gate.jsonl`, the tier whose provenance
+is known, and promotion into it is a maintainer's deliberate `git mv`. `zc
+gate` prints both numbers.
 
 **A record whose prediction was badly wrong is the most useful record there
 is.** It will not be rejected for making the number worse. The only records

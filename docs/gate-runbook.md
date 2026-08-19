@@ -93,6 +93,13 @@ not five of the same laptop:
 
 6. **Carry back** that `local.jsonl` and the doctor bundle.
 
+   That is the maintainer's route, and it is the one that puts a record in the
+   curated tier. Anyone else runs `zc share` instead: it opens a prefilled
+   GitHub editor and the record lands in `data/calibration/community/`, where it
+   moves every coefficient but not the published accuracy figure. The
+   distinction is provenance, not quality — promoting a community record into
+   `gate.jsonl` is a `git mv` a maintainer makes deliberately.
+
 ## Merging
 
 Append each machine's lines to the committed dataset and drop the doctor bundle

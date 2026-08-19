@@ -13,19 +13,25 @@ use zc_model::{fit::parse_records, Fit};
 const FAILED: i32 = 1;
 
 pub fn run() -> i32 {
-    let path = crate::fit_cmd::path();
-    let Ok(text) = std::fs::read_to_string(&path) else {
-        println!("No calibration data at {}.\n", path.display());
+    let curated = crate::fit_cmd::path();
+    let all = crate::fit_cmd::sources();
+    // "No data" means no *records*, not a missing file. With two tiers a repo
+    // can hold merged community submissions while `gate.jsonl` is absent, and
+    // the old `read_to_string` form would have taken this exit while sitting on
+    // perfectly good evidence.
+    let text = crate::fit_cmd::read_text(std::slice::from_ref(&curated));
+    if text.trim().is_empty() {
+        println!("No calibration data at {}.\n", curated.display());
         println!("The Phase 0 gate is: median decode error < {MAX_MEDIAN_ERROR_PCT:.0}% across >= {MIN_MACHINES} machines.");
         println!("Nothing has been measured, so it is unmeasurable — not failed, unknown.\n");
         println!("    ollama pull qwen3:4b && zc verify");
         return FAILED;
-    };
+    }
 
     let records = parse_records(&text);
     let g = Gate::from_records(&records);
 
-    println!("== phase 0 gate ==  ({})\n", path.display());
+    println!("== phase 0 gate ==  ({})\n", curated.display());
     println!(
         "  {} runs on {} machine(s){}",
         g.runs,
@@ -59,6 +65,21 @@ pub fn run() -> i32 {
     println!("  pooled median over all runs     {:>8.1}%", g.pooled_median_pct);
     println!("  measurement landed in range     {:>8.1}%   (the promise we published)", g.within_range_pct);
 
+    // The headline number and the exit code come from the curated tier alone.
+    // Community records are real evidence and they move every coefficient, but
+    // a claim about our own accuracy has to rest on records whose provenance we
+    // can state. Printing both, always, is what stops that reading as
+    // cherry-picking.
+    if all.len() > 1 {
+        let g_all = Gate::from_records(&parse_records(&crate::fit_cmd::read_text(&all)));
+        println!(
+            "  {:<32}{:>8.1}%   over {} machine(s)",
+            format!("with {} community record(s)", all.len() - 1),
+            g_all.median_pct,
+            g_all.machines.len()
+        );
+    }
+
     // A wide gap means accuracy is machine-specific, which is precisely the
     // failure a hardware-spec-lookup product has and this one is meant not to.
     if (g.median_pct - g.pooled_median_pct).abs() > 10.0 {
@@ -73,7 +94,7 @@ pub fn run() -> i32 {
         }
     }
 
-    let fit = Fit::load(&path);
+    let fit = Fit::from_text(&crate::fit_cmd::read_text(&all));
     if fit.is_empty() {
         println!("\n  note: these errors were produced by shipped priors, not a fit.");
     }
