@@ -93,6 +93,13 @@ for c in "check" "check --all" "fit" "gate" "--help"; do
 done
 echo "plain when piped, silent stderr, 80 columns"
 
+echo "== tui =="
+# The unit tests cover the state machine and the frame without a terminal.
+# They cannot cover whether the binary opens the TUI at all or whether the data
+# it hands over is the data the keys expect -- which is how `a` shipped as an
+# advertised key that did nothing. Skips cleanly where there is no pty.
+python3 scripts/tui_smoke.py ./target/release/zc
+
 echo "== no account name in any output =="
 # `zc doctor` is documented as paste-into-a-public-issue and `--json` gets
 # attached to bug reports, so no surface may print the user's home path. Run
