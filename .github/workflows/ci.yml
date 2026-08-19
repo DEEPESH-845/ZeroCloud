@@ -57,6 +57,24 @@ jobs:
       # here keeps the number in the README auditable on every commit.
       - run: ./target/release/zc fit && (./target/release/zc gate || true)
 
+  # The TUI on a platform nobody developing this can run. VERIFICATION.md lists
+  # "the TUI on Linux" as never executed; a runner can allocate a pty, so this
+  # is the only thing that will execute it before a user does. Windows is
+  # excluded: it has no `fcntl`/`termios`, and the script skips there anyway.
+  tui:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - run: cargo build --release
+      # A cold CI runner benchmarks far slower than a laptop, and the first
+      # frame only paints once the disk probe finishes.
+      - run: ZC_SMOKE_BOOT=90 python3 scripts/tui_smoke.py ./target/release/zc
+
   # `install.sh` is the path most users take and nothing else tests it. The
   # asset names it builds must match release.yml exactly; a mismatch means
   # every `curl | sh` 404s and no other job would notice.
