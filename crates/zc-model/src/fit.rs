@@ -151,26 +151,45 @@ pub(crate) fn median(v: &mut [f64]) -> f64 {
     }
 }
 
-/// How many standard deviations wide the published range is, each side.
-///
-/// [`mad`] returns an estimate of sigma, so publishing it directly would give a
-/// range covering roughly 68% of runs — a promise that is broken one time in
-/// three, which is not a promise. 1.645 is the 95th percentile of a normal
-/// distribution, making the two-sided range a 90% interval: one run in ten
-/// falls outside, and `within_range` in `zc gate` is the number that proves it.
+/// Fraction of runs the published range promises to contain.
 ///
 /// Not higher, because a range wide enough never to be wrong tells the user
-/// nothing. 90% is the point where the range is still a decision aid.
-const COVERAGE: f64 = 1.645;
+/// nothing. 90% is the point where the range is still a decision aid, and
+/// `within_range` in `zc gate` is the number that proves whether we keep it.
+const COVERAGE_P: f64 = 0.90;
 
-/// Median absolute deviation, scaled to be comparable with a standard
-/// deviation for normally distributed data (the 1.4826 factor).
-fn mad(v: &[f64], centre: f64) -> f64 {
-    if v.is_empty() {
+/// Half-width, as a fraction of `centre`, containing [`COVERAGE_P`] of the
+/// observed runs — read off the data rather than assumed.
+///
+/// **This used to be `1.645 * MAD * 1.4826`, and that was wrong in a way worth
+/// recording.** That formula converts a robust dispersion estimate into a 90%
+/// interval *on the assumption the samples are normally distributed*. The
+/// `Cpu/legacy` bucket is not: on 2026-08-19 it held eight runs whose implied
+/// eta ran from 0.135 to 0.904, a 6.7x span, every one of them a hypervisor
+/// guest. MAD is robust precisely because it discounts the tails, which is
+/// right when a tail is one throttled run and wrong when the tail is a third of
+/// the population. The published interval claimed 90% coverage and `zc gate`
+/// measured 54.5%.
+///
+/// The empirical quantile deletes the normality assumption instead of adding a
+/// constant to compensate for it. Nearest-rank, so it behaves at both ends: with
+/// 8 samples the 90th percentile lands past the last one and the estimator
+/// returns the sample maximum — which is itself the natural estimate of the
+/// n/(n+1) = 89% quantile, almost exactly what we are asking for. With 30 it
+/// returns the 27th of 30 and one pathological machine widens the range without
+/// dictating it.
+///
+/// The confidence floor still applies on top, so a bucket with two agreeing
+/// runs does not publish a hairline range on the strength of agreeing with
+/// itself.
+fn empirical_spread(vals: &[f64], centre: f64) -> f64 {
+    if vals.is_empty() || centre <= 0.0 {
         return 0.0;
     }
-    let mut devs: Vec<f64> = v.iter().map(|x| (x - centre).abs()).collect();
-    median(&mut devs) * 1.4826
+    let mut dev: Vec<f64> = vals.iter().map(|v| (v / centre - 1.0).abs()).collect();
+    dev.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let rank = ((COVERAGE_P * dev.len() as f64).ceil() as usize).clamp(1, dev.len());
+    dev[rank - 1]
 }
 
 pub fn parse_record(line: &str) -> Option<Record> {
@@ -308,7 +327,7 @@ impl Fit {
             .map(|(backend, (mut vals, eff_sum, hws))| {
                 let n = vals.len();
                 let eta = median(&mut vals);
-                let observed = if eta > 0.0 { COVERAGE * mad(&vals, eta) / eta } else { 0.0 };
+                let observed = empirical_spread(&vals, eta);
                 (
                     backend,
                     Parent {
@@ -342,7 +361,7 @@ impl Fit {
                 let n = vals.len();
                 let scale = median(&mut vals);
                 let confidence = Confidence::from_count(hws.len());
-                let observed = if scale > 0.0 { COVERAGE * mad(&vals, scale) / scale } else { 0.0 };
+                let observed = empirical_spread(&vals, scale);
                 (
                     backend,
                     Coefficient {
@@ -362,7 +381,7 @@ impl Fit {
                 let n = vals.len();
                 let eta = median(&mut vals);
                 let confidence = Confidence::from_count(hws.len());
-                let observed = if eta > 0.0 { COVERAGE * mad(&vals, eta) / eta } else { 0.0 };
+                let observed = empirical_spread(&vals, eta);
                 (
                     k,
                     Coefficient {
@@ -565,31 +584,45 @@ mod tests {
         assert!((s.eta - 8.0).abs() < 1e-9, "{}", s.eta);
     }
 
-    /// The published range is a 90% interval, not a one-sigma band.
+    /// The published range's half-width is the 90th percentile of observed
+    /// deviation, read off the data — not a sigma multiplied by a constant that
+    /// assumes the data is normal.
     ///
-    /// Hand-computed: forty samples split evenly between 0.75 and 0.85 have a
-    /// median of 0.80 and a median absolute deviation of exactly 0.05, so
-    /// sigma-hat is 0.05 * 1.4826 = 0.074130 and the relative spread must be
-    /// 1.645 * 0.074130 / 0.80 = 0.152430. Publishing sigma alone would have
-    /// given 0.0927 — a range broken one run in three while claiming to be a
-    /// promise.
+    /// Hand-computed. Ten runs whose implied etas are 0.40, 0.90, 0.95, 0.98,
+    /// 1.00, 1.00, 1.02, 1.05, 1.10, 1.45 have a median of exactly 1.00, so the
+    /// relative deviations are 0.60, 0.10, 0.05, 0.02, 0.00, 0.00, 0.02, 0.05,
+    /// 0.10, 0.45. Sorted, the nearest-rank 90th percentile is the
+    /// ceil(0.9 x 10) = 9th of ten, which is **0.45**. That range covers nine of
+    /// the ten runs — exactly the promise — and excludes only the worst.
+    ///
+    /// The old formula gave 1.645 x 1.4826 x median(deviation) =
+    /// 1.645 x 1.4826 x 0.05 = 0.122, a 12.2% half-width covering eight of ten
+    /// while claiming ninety percent. That is the bug this replaced.
     #[test]
-    fn a_published_range_is_a_ninety_percent_interval_not_one_sigma() {
-        let rs: Vec<Record> = (0..40)
-            .map(|i| Record {
-                hw: format!("hw{i}"),
-                ..rec("Metal", "Q4_K_M", if i % 2 == 0 { 0.75 } else { 0.85 })
-            })
+    fn the_published_range_is_read_off_the_data_not_assumed_normal() {
+        let etas = [0.40, 0.90, 0.95, 0.98, 1.00, 1.00, 1.02, 1.05, 1.10, 1.45];
+        let rs: Vec<Record> = etas
+            .iter()
+            .enumerate()
+            .map(|(i, &e)| Record { hw: format!("hw{i}"), ..rec("Metal", "Q4_K_M", e) })
             .collect();
         let c = Fit::from_records(&rs).lookup("Metal", QuantFamily::KQuant, 0.62);
 
-        assert_eq!(c.confidence, Confidence::High);
-        assert!((c.eta - 0.80).abs() < 1e-9, "eta {}", c.eta);
-        assert!(
-            (c.spread - 0.152_430).abs() < 1e-5,
-            "spread {} should be 1.645 sigma, not 1 sigma",
-            c.spread
-        );
+        assert!((c.eta - 1.00).abs() < 1e-9, "eta {}", c.eta);
+        assert!((c.spread - 0.45).abs() < 1e-9, "spread {} should be the 9th of 10 deviations", c.spread);
+
+        // And it delivers the coverage it claims, on its own data.
+        let (lo, hi) = (c.eta * (1.0 - c.spread), c.eta * (1.0 + c.spread));
+        let covered = etas.iter().filter(|&&e| lo <= e && e <= hi).count();
+        assert_eq!(covered, 9, "a 90% interval over ten runs must contain nine");
+
+        // The old normal-assumption width would have contained only eight.
+        let old = 1.645 * 1.4826 * 0.05;
+        let covered_old = etas
+            .iter()
+            .filter(|&&e| c.eta * (1.0 - old) <= e && e <= c.eta * (1.0 + old))
+            .count();
+        assert_eq!(covered_old, 8, "the formula this replaced under-covered");
     }
 
     /// The floor for an uncalibrated machine has to cover the error we have

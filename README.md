@@ -132,15 +132,26 @@ real machine that is not this one.** If you have a Windows laptop, a Linux
 desktop, or an old Intel Mac, that is the single most valuable thing anyone can
 contribute right now, and it takes about twenty minutes.
 
-**Read the second number, not the first.** The published range claims to be a
-90% interval and only 54.5% of measurements land inside it, so the ranges are
-currently too narrow — a real, stated promise that is measurably not being kept.
-The cause is visible in the data: on the CPU backend, measured efficiency runs
-from 0.135 to 0.904 across eight runs, a **6.7× spread**, and every one of those
-machines is a hypervisor guest. Predicting CPU-backend decode inside a VM to a
-useful precision may simply not be possible, and if so the honest fix is a wider
-range and a louder warning, not a better guess. The Metal backend, on real
-hardware, is tight by comparison.
+**The second number is the one that was wrong, and it has been fixed.** The
+published range claims to be a 90% interval; `zc gate` measured 54.5%. The cause
+was an assumption, not a bug: the half-width came from `1.645 × MAD`, which
+converts a robust dispersion estimate into a 90% interval *only if the samples
+are normally distributed*. On the CPU backend they are nothing like it —
+measured efficiency runs from 0.135 to 0.904 across eight runs, a **6.7× span**,
+every one of those machines a hypervisor guest. MAD is robust precisely because
+it discounts the tails, which is right when a tail is one throttled run and
+wrong when the tail is a third of the population.
+
+The width is now the **empirical 90th percentile of observed deviation**, read
+off the data. That deletes the normality assumption rather than adding a
+constant to compensate for it, and it moved the CPU range from ±45% to ±78% —
+which is the honest answer: predicting CPU decode inside a VM is imprecise, and
+the range now says so. The Metal backend, on real hardware, is unchanged.
+
+The 54.5% above is a *lagging* figure: every one of those predictions was made
+with the old width, and `within_range` is recorded at prediction time so the
+number can only be corrected by new records. Whether the fix works is therefore
+measured, not asserted, and the next machines will say.
 
 One machine (a macOS VM) is missing by 287% and is not being hidden: it is in
 the dataset, dragging the number down, until somebody understands why. Ranges
