@@ -238,7 +238,7 @@ pub fn render(r: &Report) -> String {
         push(
             p,
             &format!(
-                "\n  showing {} of {} - ranked by verdict, then speed, then context (--all for every quant)",
+                "\n  showing {} of {} - ranked by verdict, then speed, then context\n  --all for every quantisation, --top N to change the cut",
                 r.models.len(),
                 a.total_rows
             ),

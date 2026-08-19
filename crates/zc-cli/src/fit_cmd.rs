@@ -183,7 +183,12 @@ pub fn summary_text(paths: &[std::path::PathBuf]) -> String {
         .collect();
     if !thin.is_empty() {
         let _ = writeln!(o, "\n  Thin evidence in: {}", thin.join(", "));
-        let _ = writeln!(o, "  8 machines per bucket reaches medium confidence, 30 reaches high. Runs on a machine already counted sharpen eta, but never the tier: they measure that machine again, not the next one.");
+        let _ = writeln!(o, "  8 machines per bucket reaches medium confidence, 30 reaches high.");
+        let _ = writeln!(
+            o,
+            "  More runs on a machine already counted sharpen eta, never the tier:"
+        );
+        let _ = writeln!(o, "  they measure that machine again, not the next one.");
     }
     o
 }
