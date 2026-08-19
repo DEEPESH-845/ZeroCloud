@@ -412,6 +412,257 @@ mod wrap_tests {
     }
 }
 
+/// Column widths for the `zc check` table, computed from the data.
+///
+/// Fixed widths were measured on one Apple Silicon laptop, and CI on a
+/// CPU-only runner proved that wrong: a 70B model streaming off disk with no
+/// GPU reports a time-to-first-token in the thousands of seconds, and the
+/// five-column field it was given overflowed. Same class of bug as the sort
+/// that floated unrunnable models — the development machine is too good to
+/// produce the values that break the layout.
+///
+/// So every column is sized to the widest cell actually being printed, and the
+/// model name — the one column that can afford to lose characters, because a
+/// reader can still tell the models apart — gives back width until the row
+/// fits 80.
+pub struct TableCols {
+    pub model: usize,
+    pub quant: usize,
+    pub speed: usize,
+    pub ctx: bool,
+    pub ctx_w: usize,
+    pub ttft: bool,
+    pub ttft_w: usize,
+    pub conf: bool,
+    pub conf_w: usize,
+    pub resid: bool,
+    pub resid_w: usize,
+}
+
+/// Verdict marker, its trailing space, and the two leading spaces.
+const ROW_LEAD: usize = 2 + 4 + 1;
+/// One space before the quant and speed columns, which never drop.
+const ROW_GAPS: usize = 2;
+pub const TABLE_WIDTH: usize = 80;
+
+impl TableCols {
+    /// Size every column to the widest cell it must hold, headers included,
+    /// then drop optional columns until the row fits 80.
+    ///
+    /// Nothing is truncated. A shortened model id cannot be pasted into
+    /// `ollama pull`, which is the next thing a reader does with it, so the
+    /// columns a reader can most afford to lose go first instead — confidence
+    /// (which reads "low" for nearly every row until the dataset grows), then
+    /// the spill percentage, then TTFT, then context. Model, quant and speed
+    /// never drop: between them they are the whole answer.
+    pub fn for_rows(rows: &[(&str, &str, &str, &str, &str, &str, &str)]) -> TableCols {
+        let w = |i: usize, head: usize| {
+            rows.iter()
+                .map(|r| [r.0, r.1, r.2, r.3, r.4, r.5, r.6][i].chars().count())
+                .max()
+                .unwrap_or(0)
+                .max(head)
+        };
+        let mut c = TableCols {
+            model: w(0, "model".len()),
+            quant: w(1, "quant".len()),
+            speed: w(2, "decode t/s".len()),
+            ctx: true,
+            ctx_w: w(3, "ctx".len()),
+            ttft: true,
+            ttft_w: w(4, "TTFT".len()),
+            conf: true,
+            conf_w: w(5, "conf".len()),
+            resid: true,
+            resid_w: w(6, "%RAM".len()),
+        };
+        for drop in 0..4 {
+            if c.width() <= TABLE_WIDTH {
+                break;
+            }
+            match drop {
+                0 => c.conf = false,
+                1 => c.resid = false,
+                2 => c.ttft = false,
+                _ => c.ctx = false,
+            }
+        }
+        c
+    }
+
+    /// Total columns this layout occupies.
+    pub fn width(&self) -> usize {
+        ROW_LEAD
+            + self.model
+            + ROW_GAPS
+            + self.quant
+            + self.speed
+            + usize::from(self.ctx) * (self.ctx_w + 1)
+            + usize::from(self.ttft) * (self.ttft_w + 1)
+            + usize::from(self.conf) * (self.conf_w + 1)
+            + usize::from(self.resid) * (self.resid_w + 1)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn line(
+        &self,
+        mark: &str,
+        model: &str,
+        quant: &str,
+        speed: &str,
+        ctx: &str,
+        ttft: &str,
+        conf: &str,
+        resid: &str,
+    ) -> String {
+        let mut s = format!(
+            "  {mark} {:<mw$} {:<qw$} {:>sw$}",
+            model,
+            quant,
+            speed,
+            mw = self.model,
+            qw = self.quant,
+            sw = self.speed
+        );
+        if self.ctx {
+            s.push_str(&format!(" {:>w$}", ctx, w = self.ctx_w));
+        }
+        if self.ttft {
+            s.push_str(&format!(" {:>w$}", ttft, w = self.ttft_w));
+        }
+        if self.conf {
+            s.push_str(&format!(" {:<w$}", conf, w = self.conf_w));
+        }
+        if self.resid {
+            s.push_str(&format!(" {:>w$}", resid, w = self.resid_w));
+        }
+        s.trim_end().to_string()
+    }
+
+    pub fn header(&self) -> String {
+        self.line("    ", "model", "quant", "decode t/s", "ctx", "TTFT", "conf", "%RAM")
+    }
+
+    /// `mark` is pre-padded to four columns and may carry colour, so it is
+    /// inserted rather than formatted — padding first and painting second is
+    /// the existing contract.
+    #[allow(clippy::too_many_arguments)]
+    pub fn row(
+        &self,
+        mark: &str,
+        model: &str,
+        quant: &str,
+        speed: &str,
+        ctx: &str,
+        ttft: &str,
+        conf: &str,
+        resid: &str,
+    ) -> String {
+        self.line(mark, model, quant, speed, ctx, ttft, conf, resid)
+    }
+}
+
+#[cfg(test)]
+mod table_width_tests {
+    /// The row layout is computed from the widths the *data* needs, because
+    /// fixed widths were measured on one laptop and CI proved that wrong.
+    ///
+    /// A CPU-only runner with no GPU produces a time-to-first-token in the
+    /// thousands of seconds for a 70B streaming off disk, and a fast machine
+    /// produces four-digit decode rates. Both are wider than the fields the
+    /// author's Apple Silicon laptop ever asked for, and both pushed `zc check
+    /// --all` past 80 columns on a machine nobody here owns.
+    #[test]
+    fn extreme_but_real_values_still_fit_eighty_columns() {
+        let cases = [
+            // (model, quant, speed, ctx, ttft, conf, resid)
+            ("deepseek-r1-distill-llama-8b", "IQ2_XXS", "1234.5-2345.6", "1024K", "12345s", "medium", "99%"),
+            ("qwen3-30b-a3b", "Q4_K_M", "0.0-0.1", "2K", "99999s", "high", "3%"),
+            ("smollm2-360m", "Q8_0", "9999.9-99999.9", "8K", "0.1s", "low", ""),
+        ];
+        for (model, quant, speed, ctx, ttft, conf, resid) in cases {
+            let cols = super::TableCols::for_rows(
+                &[(model, quant, speed, ctx, ttft, conf, resid)],
+            );
+            let line = cols.row("OK  ", model, quant, speed, ctx, ttft, conf, resid);
+            assert!(
+                line.chars().count() <= 80,
+                "{} columns: {line}",
+                line.chars().count()
+            );
+            let head = cols.header();
+            assert!(
+                head.chars().count() <= 80,
+                "header {} columns: {head}",
+                head.chars().count()
+            );
+            assert_eq!(head.chars().count(), head.trim_end().chars().count());
+        }
+    }
+
+    /// The invariant, over the whole space of cell widths rather than the
+    /// handful of cases anyone thought to imagine.
+    ///
+    /// This is the point: the previous layout was correct for every value the
+    /// author's laptop produced and wrong on a CPU-only CI runner. A property
+    /// that holds only for observed data is not a property.
+    #[test]
+    fn no_combination_of_cell_widths_overflows() {
+        let pad = |n: usize| "x".repeat(n);
+        // Model ids in the catalog top out at 28; allow well past it.
+        for model in [5usize, 12, 20, 28, 34] {
+            for speed in [7usize, 11, 14, 18] {
+                for ttft in [1usize, 5, 7, 9] {
+                    for ctx in [1usize, 4, 6, 8] {
+                        let m = pad(model);
+                        let s = pad(speed);
+                        let t = pad(ttft);
+                        let c = pad(ctx);
+                        let rows = [(
+                            m.as_str(),
+                            "IQ2_XXS",
+                            s.as_str(),
+                            c.as_str(),
+                            t.as_str(),
+                            "medium",
+                            "99%",
+                        )];
+                        let cols = super::TableCols::for_rows(&rows);
+                        let line = cols.row("OK  ", &m, "IQ2_XXS", &s, &c, &t, "medium", "99%");
+                        let n = line.chars().count();
+                        assert!(
+                            n <= super::TABLE_WIDTH,
+                            "{n} columns at model={model} speed={speed} ttft={ttft} ctx={ctx}: {line}"
+                        );
+                        assert!(cols.header().chars().count() <= super::TABLE_WIDTH);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Columns are given up in a fixed order, and only as far as needed.
+    #[test]
+    fn columns_drop_in_order_and_only_when_needed() {
+        let narrow = super::TableCols::for_rows(&[("qwen3-1.7b", "Q8_0", "48.1-80.2", "40K", "0.9s", "low", "")]);
+        assert!(narrow.conf && narrow.ctx && narrow.ttft && narrow.resid, "nothing drops when it all fits");
+        let wide = super::TableCols::for_rows(&[(
+            "deepseek-r1-distill-llama-8b", "IQ2_XXS", "1234.5-2345.6", "1024K", "12345s", "medium", "99%",
+        )]);
+        assert!(!wide.conf, "confidence is the first to go");
+        assert!(wide.ctx && wide.ttft, "and nothing else goes with it");
+    }
+
+    /// Narrow data must not be padded out to the widest case: a machine whose
+    /// rows are all short still gets a compact table.
+    #[test]
+    fn narrow_data_gives_a_narrow_table() {
+        let cols = super::TableCols::for_rows(&[("qwen3-1.7b", "Q8_0", "48.1-80.2", "40K", "0.9s", "low", "")]);
+        let line = cols.row("OK  ", "qwen3-1.7b", "Q8_0", "48.1-80.2", "40K", "0.9s", "low", "");
+        assert!(line.chars().count() < 60, "{} columns: {line}", line.chars().count());
+    }
+}
+
 #[cfg(test)]
 mod sort_tests {
     use super::*;
