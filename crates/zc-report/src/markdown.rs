@@ -15,20 +15,9 @@
 //! directory is a path. Every absolute path is therefore rewritten against
 //! `$HOME` before it is printed. See [`redact`].
 
-use crate::Report;
+use crate::{redact, Report};
 use zc_probe::human;
 
-/// Replace the user's home directory with `~`.
-///
-/// A single substring replacement rather than anything clever, because the
-/// failure mode that matters is *missing* an occurrence, not over-matching.
-/// `/Users/alice/models/x.gguf` carries a real name into a public bug report.
-pub fn redact(s: &str, home: Option<&str>) -> String {
-    match home.filter(|h| !h.is_empty() && *h != "/") {
-        Some(h) => s.replace(h, "~"),
-        None => s.to_string(),
-    }
-}
 
 /// Environment variables that change what `zc` does. Values are shown, because
 /// a wrong value is the bug about half the time.
@@ -42,9 +31,7 @@ const RELEVANT_ENV: &[&str] = &[
 ];
 
 pub fn render(r: &Report, fit_summary: &str) -> String {
-    let home = std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .ok();
+    let home = crate::home();
     let home = home.as_deref();
     let mut o = String::with_capacity(8192);
     let p = &mut o;
@@ -290,7 +277,7 @@ fn row(out: &mut String, k: &str, v: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::redact;
 
     /// A bug report is public. `/Users/alice/...` carries a real name into it,
     /// and the model directory is the one field guaranteed to be a path.

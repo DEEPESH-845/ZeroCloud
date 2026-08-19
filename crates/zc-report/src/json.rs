@@ -19,7 +19,13 @@ use zc_probe::storage::{Hazard, Medium};
 
 /// Bump when a field changes meaning or disappears. Additive fields do not
 /// require a bump; anything a consumer could already be parsing does.
-const SCHEMA: u32 = 1;
+///
+/// 2: `storage.model_dir` and `storage.mount` are home-relative (`~/...`)
+///    rather than absolute. A user attaching `--json` to a bug report was
+///    publishing their account name; a consumer on the same machine can
+///    expand `~`, and one on another machine could not have used the absolute
+///    path anyway.
+const SCHEMA: u32 = 2;
 
 pub fn render(r: &Report) -> String {
     let mut o = String::with_capacity(8192);
@@ -67,8 +73,8 @@ pub fn render(r: &Report) -> String {
     o.push_str(&format!(
         "\"storage\":{{\"model_dir\":{},\"mount\":{},\"fstype\":{},\"medium\":{},\
          \"source\":{},\"total\":{},\"free\":{},\"bench_file_is_weight\":{},\"hazards\":[",
-        st(&r.storage.model_dir.display().to_string()),
-        st(&r.storage.mount.display().to_string()),
+        st(&crate::redact_home(&r.storage.model_dir.display().to_string())),
+        st(&crate::redact_home(&r.storage.mount.display().to_string())),
         st(&r.storage.fstype),
         st(medium_tag(&r.storage.medium)),
         st(r.storage.source),

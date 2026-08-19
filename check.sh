@@ -82,9 +82,33 @@ fi
 if ./target/release/zc check --all 2>/dev/null | awk 'length>80' | grep -q .; then
   echo "a row ran past 80 columns"; exit 1
 fi
-if ./target/release/zc --help | awk 'length>80' | grep -q .; then
-  echo "a help line ran past 80 columns"; exit 1
-fi
+# No line of terminal output may exceed 80 columns. `zc doctor` is exempt --
+# it is Markdown for a GitHub issue, where soft wrap is correct -- and so is
+# the share URL, which must stay one copy-pasteable token.
+for c in "check" "check --all" "fit" "gate" "--help"; do
+  # shellcheck disable=SC2086
+  if ./target/release/zc $c 2>/dev/null | awk 'length>80' | grep -q .; then
+    echo "a line of \`zc $c\` ran past 80 columns"; exit 1
+  fi
+done
 echo "plain when piped, silent stderr, 80 columns"
+
+echo "== no account name in any output =="
+# `zc doctor` is documented as paste-into-a-public-issue and `--json` gets
+# attached to bug reports, so no surface may print the user's home path. Run
+# from a temp directory: inside the repo the calibration file resolves to a
+# relative path and the leak would hide.
+tmp=$(mktemp -d)
+zcbin="$PWD/target/release/zc"
+leak=0
+for c in "check" "check --json" "doctor" "fit" "gate" "share --print"; do
+  # shellcheck disable=SC2086
+  if (cd "$tmp" && "$zcbin" $c 2>/dev/null) | grep -qF "$HOME"; then
+    echo "\`zc $c\` printed \$HOME"; leak=1
+  fi
+done
+rm -rf "$tmp"
+[ "$leak" -eq 0 ] || exit 1
+echo "no \$HOME in check, json, doctor, fit, gate, share"
 
 echo "OK"

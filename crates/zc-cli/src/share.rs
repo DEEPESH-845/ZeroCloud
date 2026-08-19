@@ -162,7 +162,12 @@ pub fn run(record: Option<&str>, print_only: bool) -> i32 {
     };
     let url = share_url(&filename, &line);
 
-    println!("== share ==  ({})\n", path.display());
+    // "not in it: ... file paths" is printed three lines below this. Naming an
+    // absolute home path here contradicted it on the same screen.
+    println!(
+        "== share ==  ({})\n",
+        zc_report::redact_home(&path.display().to_string())
+    );
     println!("  This is the whole record. Nothing else is sent, and zc opens no");
     println!("  connection itself -- your browser does, and you watch it happen.\n");
     print!("{}", describe(&line));
