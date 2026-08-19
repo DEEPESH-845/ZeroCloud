@@ -19,7 +19,7 @@ pub fn run(m: &Machine, fit: &Fit, kv: KvPrecision) -> i32 {
     let report = crate::check::report(m, fit, kv, Vec::new(), 0);
     print!(
         "{}",
-        zc_report::markdown::render(&report, &crate::fit_cmd::summary_text(&crate::fit_cmd::path()))
+        zc_report::markdown::render(&report, &crate::fit_cmd::summary_text(&crate::fit_cmd::sources()))
     );
     0
 }
