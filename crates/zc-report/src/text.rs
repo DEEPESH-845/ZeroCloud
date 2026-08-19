@@ -1,10 +1,45 @@
 //! Human-readable rendering. This is the output `zc check` has always had.
 
 use crate::Report;
+use std::io::IsTerminal;
 use zc_model::{Backend, Verdict};
 use zc_probe::human;
 
+const GREEN: &str = "\x1b[32m";
+const YELLOW: &str = "\x1b[33m";
+const RED: &str = "\x1b[31m";
+const RESET: &str = "\x1b[0m";
+
+/// Colour only when a human is looking at a terminal that wants it.
+///
+/// Three conditions, all of them things users legitimately expect: a pipe or a
+/// file gets plain text so `zc check > report.txt` and `zc check | grep` are
+/// not full of escape codes, `NO_COLOR` is honoured because it is the standard
+/// (no-color.org), and `TERM=dumb` means the terminal has said it cannot.
+fn colors_enabled() -> bool {
+    std::io::stdout().is_terminal()
+        && std::env::var_os("NO_COLOR").is_none()
+        && std::env::var("TERM").is_ok_and(|t| t != "dumb")
+}
+
+/// Wrap already-padded text in a colour.
+///
+/// Padding first and painting second is the whole contract. `format!("{:<4}")`
+/// counts escape bytes as characters, so painting before padding silently
+/// shortens the visible cell and every column to its right walks left by five.
+fn paint(padded: &str, code: &str, on: bool) -> String {
+    if on {
+        format!("{code}{padded}{RESET}")
+    } else {
+        padded.to_string()
+    }
+}
+
 pub fn render(r: &Report) -> String {
+    render_with(r, colors_enabled())
+}
+
+pub fn render_with(r: &Report, color: bool) -> String {
     let mut o = String::with_capacity(4096);
     let p = &mut o;
 
@@ -173,12 +208,16 @@ pub fn render(r: &Report) -> String {
 
     for row in &r.models {
         let pr = &row.prediction;
-        let mark = match pr.verdict {
-            Verdict::Good => "OK",
-            Verdict::Usable => "ok",
-            Verdict::Slow => "SLOW",
-            Verdict::WontFit => "XX",
+        // The verdict is the one cell the eye should find without reading, so
+        // it is the only thing coloured. Painting more would make the table
+        // louder without making it faster to scan.
+        let (mark, hue) = match pr.verdict {
+            Verdict::Good => ("OK", GREEN),
+            Verdict::Usable => ("ok", GREEN),
+            Verdict::Slow => ("SLOW", YELLOW),
+            Verdict::WontFit => ("XX", RED),
         };
+        let mark = paint(&format!("{mark:<4}"), hue, color);
         let ctx = if pr.max_context == 0 {
             "-".to_string()
         } else if pr.max_context >= 1024 {
@@ -202,7 +241,7 @@ pub fn render(r: &Report) -> String {
         push(
             p,
             &format!(
-                "  {:<4} {:<28} {:<7} {:>12} {:>7} {:>6}  {:<6}{}",
+                "  {} {:<28} {:<7} {:>12} {:>7} {:>6}  {:<6}{}",
                 mark,
                 row.model_id,
                 row.quant.name,
@@ -283,6 +322,42 @@ fn push(out: &mut String, line: &str) {
 
 #[cfg(test)]
 mod tests {
+    /// Colour must never change a column's width. `format!("{:<4}")` counts the
+    /// five bytes of an escape sequence as characters, so painting *before*
+    /// padding shortens the visible cell and walks every column to its right
+    /// five places left -- a table that looks corrupted only for the users who
+    /// have colour on, which is exactly the users who see it first.
+    #[test]
+    fn colour_never_changes_a_column_width() {
+        fn visible(s: &str) -> String {
+            let mut out = String::new();
+            let mut chars = s.chars();
+            while let Some(c) = chars.next() {
+                if c == '\x1b' {
+                    for c in chars.by_ref() {
+                        if c == 'm' {
+                            break;
+                        }
+                    }
+                } else {
+                    out.push(c);
+                }
+            }
+            out
+        }
+
+        let plain = format!("{:<4}", "OK");
+        assert_eq!(plain.len(), 4);
+        let painted = super::paint(&plain, super::GREEN, true);
+        assert_eq!(visible(&painted), plain, "colour changed the visible text");
+        assert!(painted.len() > plain.len(), "nothing was actually painted");
+
+        // And a full row keeps its shape: the header and the row must still
+        // agree on where the model column starts.
+        let off = super::paint(&format!("{:<4}", "SLOW"), super::YELLOW, false);
+        assert_eq!(off, "SLOW", "colour off must be byte-identical to plain");
+    }
+
     /// A row whose last column is an empty optional note must not end in the
     /// padding of the column before it.
     #[test]
