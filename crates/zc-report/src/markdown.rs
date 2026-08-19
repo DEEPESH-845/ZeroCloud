@@ -242,7 +242,11 @@ pub fn render(r: &Report, fit_summary: &str) -> String {
     // -- calibration ---------------------------------------------------------
     line(p, "## Calibration\n");
     line(p, "```");
-    line(p, fit_summary.trim_end());
+    // Redacted like every other path in this file. `fit_cmd::summary_text`
+    // names the calibration file it read, which lives under `$HOME`, so this
+    // was the one line in a report headed for a public issue that still
+    // carried the user's account name.
+    line(p, redact(fit_summary, home).trim_end());
     line(p, "```\n");
 
     // -- environment ---------------------------------------------------------
