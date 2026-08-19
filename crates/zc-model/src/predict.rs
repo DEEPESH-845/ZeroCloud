@@ -563,8 +563,8 @@ mod tests {
 
         // 40 consistent runs saying the machine really achieves eta = 0.85.
         let records: Vec<Record> = (0..40)
-            .map(|_| Record {
-                hw: "x".into(),
+            .map(|i| Record {
+                hw: format!("hw{i}"),
                 backend: "Metal".into(),
                 model: "m".into(),
                 quant: "Q4_K_M".into(),
@@ -789,8 +789,8 @@ mod tests {
         let spec = llama3_8b();
         let quant = q("Q4_K_M", 4 << 30, crate::spec::QuantFamily::KQuant);
         let records: Vec<Record> = (0..40)
-            .map(|_| Record {
-                hw: "x".into(),
+            .map(|i| Record {
+                hw: format!("hw{i}"),
                 backend: "Discrete".into(),
                 model: "m".into(),
                 quant: "Q4_K_M".into(),

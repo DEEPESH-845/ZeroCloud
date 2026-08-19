@@ -22,7 +22,7 @@
 
 use crate::json;
 use crate::spec::QuantFamily;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// One measurement, parsed from a line of `data/calibration/*.jsonl`.
 #[derive(Debug, Clone)]
@@ -67,13 +67,20 @@ pub enum Confidence {
 }
 
 impl Confidence {
-    /// Sample counts at which we allow ourselves to narrow the range.
+    /// Machine counts at which we allow ourselves to narrow the range.
     ///
     /// Thresholds are conservative on purpose. The failure that kills a
     /// prediction tool is a confident wrong number, so the cost of staying
     /// wide too long is much lower than the cost of narrowing too early.
-    fn from_count(n: usize) -> Self {
-        match n {
+    ///
+    /// The count is **distinct machines, not runs**. Ten runs of one model on
+    /// one laptop measure that laptop ten times; they say nothing new about the
+    /// next machine, and letting them reach `Medium` would narrow the published
+    /// range on evidence that does not exist. `merge` already refuses to let a
+    /// duplicated line inflate a tier; honest repeat runs are the same problem
+    /// wearing a better disguise.
+    fn from_count(machines: usize) -> Self {
+        match machines {
             0 => Confidence::Prior,
             1..=7 => Confidence::Low,
             8..=29 => Confidence::Medium,
@@ -124,6 +131,9 @@ pub struct Coefficient {
     pub spread: f64,
     pub confidence: Confidence,
     pub samples: usize,
+    /// Distinct machines behind `samples`. This, not the run count, sets the
+    /// confidence tier — see [`Confidence::from_count`].
+    pub machines: usize,
 }
 
 /// Median of a slice. Takes `&mut` because it sorts in place rather than
@@ -200,6 +210,7 @@ struct Parent {
     eta: f64,
     spread: f64,
     samples: usize,
+    machines: usize,
     mean_prior_efficiency: f64,
 }
 
@@ -256,8 +267,8 @@ impl Fit {
     /// backend yet. Falling back to the parent is much better than falling all
     /// the way to a shipped prior.
     pub fn from_records(records: &[Record]) -> Self {
-        let mut groups: HashMap<String, Vec<f64>> = HashMap::new();
-        let mut parent_vals: HashMap<String, (Vec<f64>, f64)> = HashMap::new();
+        let mut groups: HashMap<String, (Vec<f64>, HashSet<&str>)> = HashMap::new();
+        let mut parent_vals: HashMap<String, (Vec<f64>, f64, HashSet<&str>)> = HashMap::new();
         for r in records {
             // Guard against garbage: eta above 1.0 means the run beat the
             // machine's measured bandwidth, which is physically impossible and
@@ -265,18 +276,18 @@ impl Fit {
             if !r.implied_eta.is_finite() || r.implied_eta <= 0.0 || r.implied_eta > 1.5 {
                 continue;
             }
-            groups
-                .entry(key(&r.backend, r.quant_family))
-                .or_default()
-                .push(r.implied_eta);
+            let g = groups.entry(key(&r.backend, r.quant_family)).or_default();
+            g.0.push(r.implied_eta);
+            g.1.insert(r.hw.as_str());
             let p = parent_vals.entry(r.backend.clone()).or_default();
             p.0.push(r.implied_eta);
             p.1 += r.quant_family.efficiency();
+            p.2.insert(r.hw.as_str());
         }
 
         let parents = parent_vals
             .into_iter()
-            .map(|(backend, (mut vals, eff_sum))| {
+            .map(|(backend, (mut vals, eff_sum, hws))| {
                 let n = vals.len();
                 let eta = median(&mut vals);
                 let observed = if eta > 0.0 { COVERAGE * mad(&vals, eta) / eta } else { 0.0 };
@@ -286,6 +297,7 @@ impl Fit {
                         eta,
                         spread: observed.max(Confidence::Low.min_spread()),
                         samples: n,
+                        machines: hws.len(),
                         mean_prior_efficiency: eff_sum / n.max(1) as f64,
                     },
                 )
@@ -294,22 +306,24 @@ impl Fit {
 
         // Prefill is grouped by backend only. It is dominated by which device
         // runs the GEMM, not by the weight quantisation.
-        let mut prefill_vals: HashMap<String, Vec<f64>> = HashMap::new();
+        let mut prefill_vals: HashMap<String, (Vec<f64>, HashSet<&str>)> = HashMap::new();
         for r in records {
             if let Some(v) = r.implied_prefill_scale
                 && v.is_finite()
                 && v > 0.0
                 && v < 1000.0
             {
-                prefill_vals.entry(r.backend.clone()).or_default().push(v);
+                let g = prefill_vals.entry(r.backend.clone()).or_default();
+                g.0.push(v);
+                g.1.insert(r.hw.as_str());
             }
         }
         let prefill = prefill_vals
             .into_iter()
-            .map(|(backend, mut vals)| {
+            .map(|(backend, (mut vals, hws))| {
                 let n = vals.len();
                 let scale = median(&mut vals);
-                let confidence = Confidence::from_count(n);
+                let confidence = Confidence::from_count(hws.len());
                 let observed = if scale > 0.0 { COVERAGE * mad(&vals, scale) / scale } else { 0.0 };
                 (
                     backend,
@@ -318,6 +332,7 @@ impl Fit {
                         spread: observed.max(confidence.min_spread()),
                         confidence,
                         samples: n,
+                        machines: hws.len(),
                     },
                 )
             })
@@ -325,10 +340,10 @@ impl Fit {
 
         let buckets = groups
             .into_iter()
-            .map(|(k, mut vals)| {
+            .map(|(k, (mut vals, hws))| {
                 let n = vals.len();
                 let eta = median(&mut vals);
-                let confidence = Confidence::from_count(n);
+                let confidence = Confidence::from_count(hws.len());
                 let observed = if eta > 0.0 { COVERAGE * mad(&vals, eta) / eta } else { 0.0 };
                 (
                     k,
@@ -338,6 +353,7 @@ impl Fit {
                         spread: observed.max(confidence.min_spread()),
                         confidence,
                         samples: n,
+                        machines: hws.len(),
                     },
                 )
             })
@@ -374,6 +390,7 @@ impl Fit {
                 confidence: Confidence::Low,
                 spread: p.spread.max(Confidence::Low.min_spread()),
                 samples: p.samples,
+                machines: p.machines,
             };
         }
         Coefficient {
@@ -381,6 +398,7 @@ impl Fit {
             spread: Confidence::Prior.min_spread(),
             confidence: Confidence::Prior,
             samples: 0,
+            machines: 0,
         }
     }
 
@@ -457,6 +475,14 @@ mod tests {
         }
     }
 
+    /// `n` records agreeing on `eta`, each from a *different* machine — which
+    /// is the count the confidence tier reads.
+    fn recs(n: usize, backend: &str, quant: &str, eta: f64) -> Vec<Record> {
+        (0..n)
+            .map(|i| Record { hw: format!("hw{i}"), ..rec(backend, quant, eta) })
+            .collect()
+    }
+
     fn rec_p(backend: &str, quant: &str, eta: f64, scale: f64) -> Record {
         Record {
             implied_prefill_scale: Some(scale),
@@ -478,8 +504,12 @@ mod tests {
     /// benchmark — so nothing may clamp it into an efficiency-like range.
     #[test]
     fn prefill_scale_may_exceed_one_and_is_grouped_by_backend() {
-        let mut rs: Vec<Record> = (0..12).map(|_| rec_p("Metal", "Q4_K_M", 0.85, 8.0)).collect();
-        rs.extend((0..3).map(|_| rec_p("Cpu", "Q4_K_M", 0.60, 0.9)));
+        let mut rs: Vec<Record> = (0..12)
+            .map(|i| Record { hw: format!("hw{i}"), ..rec_p("Metal", "Q4_K_M", 0.85, 8.0) })
+            .collect();
+        rs.extend(
+            (0..3).map(|i| Record { hw: format!("cpu{i}"), ..rec_p("Cpu", "Q4_K_M", 0.60, 0.9) }),
+        );
         let fit = Fit::from_records(&rs);
 
         let metal = fit.prefill_scale("Metal").expect("metal");
@@ -515,7 +545,10 @@ mod tests {
     #[test]
     fn a_published_range_is_a_ninety_percent_interval_not_one_sigma() {
         let rs: Vec<Record> = (0..40)
-            .map(|i| rec("Metal", "Q4_K_M", if i % 2 == 0 { 0.75 } else { 0.85 }))
+            .map(|i| Record {
+                hw: format!("hw{i}"),
+                ..rec("Metal", "Q4_K_M", if i % 2 == 0 { 0.75 } else { 0.85 })
+            })
             .collect();
         let c = Fit::from_records(&rs).lookup("Metal", QuantFamily::KQuant, 0.62);
 
@@ -582,15 +615,39 @@ mod tests {
             (29, Confidence::Medium),
             (30, Confidence::High),
         ] {
-            let rs: Vec<Record> = (0..n).map(|_| rec("Cpu", "Q4_K_M", 0.7)).collect();
+            let rs = recs(n, "Cpu", "Q4_K_M", 0.7);
             let c = Fit::from_records(&rs).lookup("Cpu", QuantFamily::KQuant, 0.62);
             assert_eq!(c.confidence, want, "n={n}");
             assert_eq!(c.samples, n);
+            assert_eq!(c.machines, n);
         }
         let wide = Fit::default().lookup("Cpu", QuantFamily::KQuant, 0.62);
-        let narrow: Vec<Record> = (0..40).map(|_| rec("Cpu", "Q4_K_M", 0.7)).collect();
+        let narrow = recs(40, "Cpu", "Q4_K_M", 0.7);
         let narrow = Fit::from_records(&narrow).lookup("Cpu", QuantFamily::KQuant, 0.62);
         assert!(narrow.spread < wide.spread, "{} vs {}", narrow.spread, wide.spread);
+    }
+
+    /// Repeat runs on one machine must not buy confidence.
+    ///
+    /// Forty runs of the same model on the same laptop measure that laptop
+    /// forty times. They agree with each other by construction, so MAD is zero
+    /// and only the tier floor holds the range open — if the tier read run
+    /// count it would reach `High` and publish an 8% band off one machine.
+    #[test]
+    fn one_machine_cannot_buy_confidence_by_repeating() {
+        let rs: Vec<Record> = (0..40).map(|_| rec("Cpu", "Q4_K_M", 0.7)).collect();
+        let c = Fit::from_records(&rs).lookup("Cpu", QuantFamily::KQuant, 0.62);
+
+        assert_eq!(c.samples, 40);
+        assert_eq!(c.machines, 1);
+        assert_eq!(c.confidence, Confidence::Low);
+        assert!((c.spread - Confidence::Low.min_spread()).abs() < 1e-9, "spread {}", c.spread);
+
+        // The same forty runs spread across forty machines are real evidence.
+        let spread_out = Fit::from_records(&recs(40, "Cpu", "Q4_K_M", 0.7))
+            .lookup("Cpu", QuantFamily::KQuant, 0.62);
+        assert_eq!(spread_out.confidence, Confidence::High);
+        assert!(spread_out.spread < c.spread, "{} vs {}", spread_out.spread, c.spread);
     }
 
     /// Observed spread must win when it is wider than the confidence floor —
@@ -598,7 +655,10 @@ mod tests {
     #[test]
     fn observed_spread_overrides_the_floor_when_wider() {
         let rs: Vec<Record> = (0..40)
-            .map(|i| rec("Cpu", "Q4_K_M", if i % 2 == 0 { 0.4 } else { 0.9 }))
+            .map(|i| Record {
+                hw: format!("hw{i}"),
+                ..rec("Cpu", "Q4_K_M", if i % 2 == 0 { 0.4 } else { 0.9 })
+            })
             .collect();
         let c = Fit::from_records(&rs).lookup("Cpu", QuantFamily::KQuant, 0.62);
         assert_eq!(c.confidence, Confidence::High);
@@ -609,7 +669,7 @@ mod tests {
     /// bucket, but must never be reported as better than Low confidence.
     #[test]
     fn falls_back_to_backend_parent_then_prior() {
-        let rs: Vec<Record> = (0..30).map(|_| rec("Metal", "Q4_K_M", 0.85)).collect();
+        let rs = recs(30, "Metal", "Q4_K_M", 0.85);
         let fit = Fit::from_records(&rs);
 
         let exact = fit.lookup("Metal", QuantFamily::KQuant, 0.62);

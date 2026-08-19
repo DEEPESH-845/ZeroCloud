@@ -94,15 +94,16 @@ pub fn summary_text(path: &std::path::Path) -> String {
     let _ = writeln!(o, "== fitted coefficients ==  ({source})\n");
     let _ = writeln!(
         o,
-        "  {:<24} {:>7} {:>9} {:>9}  confidence",
-        "bucket", "runs", "eta", "spread"
+        "  {:<24} {:>7} {:>9} {:>9} {:>9}  confidence",
+        "bucket", "runs", "machines", "eta", "spread"
     );
     for (key, c) in fit.summary() {
         let _ = writeln!(
             o,
-            "  {:<24} {:>7} {:>9.3} {:>8.0}%  {}",
+            "  {:<24} {:>7} {:>9} {:>9.3} {:>8.0}%  {}",
             key,
             c.samples,
+            c.machines,
             c.eta,
             c.spread * 100.0,
             c.confidence.label()
@@ -117,7 +118,7 @@ pub fn summary_text(path: &std::path::Path) -> String {
         .collect();
     if !thin.is_empty() {
         let _ = writeln!(o, "\n  Thin evidence in: {}", thin.join(", "));
-        let _ = writeln!(o, "  8 runs per bucket reaches medium confidence, 30 reaches high.");
+        let _ = writeln!(o, "  8 machines per bucket reaches medium confidence, 30 reaches high. Runs on a machine already counted sharpen eta, but never the tier: they measure that machine again, not the next one.");
     }
     o
 }
