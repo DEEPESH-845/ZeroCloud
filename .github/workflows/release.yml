@@ -115,13 +115,16 @@ jobs:
       # the only place the Linux and Windows probe paths run before a human
       # takes the binary to real hardware. aarch64-linux cannot execute on an
       # x86_64 runner, so it is covered by the field campaign instead.
-      - name: smoke test
+      # The artifact users will actually download, run before it is uploaded.
+      # Every bug this project has shipped was visible only from outside the
+      # repo on a built binary, so the full contract set runs here and not just
+      # a JSON parse. Cross-built aarch64 linux cannot execute on this runner.
+      - name: smoke test the artifact
         if: matrix.target != 'aarch64-unknown-linux-musl'
         run: |
           set -eu
           if [ "${{ runner.os }}" = "Windows" ]; then ext=".exe"; else ext=""; fi
-          ./"zc-${{ matrix.target }}${ext}" check --json --top 3 | python3 -m json.tool > /dev/null
-          echo "json parses"
+          python3 scripts/contract_smoke.py "./zc-${{ matrix.target }}${ext}"
 
       - name: upload
         env:

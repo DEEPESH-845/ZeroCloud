@@ -64,6 +64,35 @@ zc-x86_64-apple-darwin              zc-aarch64-apple-darwin
 zc-x86_64-pc-windows-msvc.exe
 ```
 
+## The one command that ships it
+
+Everything below the tag is automated. Run this only when `main` is green and
+you have read the checklist above it:
+
+```sh
+git tag -a v0.1.0 -m "v0.1.0" && git push origin v0.1.0
+```
+
+`release.yml` then creates the release, builds five targets, runs
+`scripts/contract_smoke.py` against **each built artifact** before uploading —
+22 assertions on the binary a user will actually download — and attaches them.
+A tag containing a hyphen (`v0.1.0-rc1`) is published as a prerelease, and
+`/releases/latest` ignores prereleases, so `curl | sh` keeps reporting
+"no published release yet" until a hyphen-free tag exists.
+
+Before tagging, confirm locally:
+
+```sh
+./check.sh                                   # tests, clippy, cross-compile,
+                                             # contracts, tui, installer
+cargo package -p zc-model                    # must say Packaged AND Finished
+grep -c version crates/*/Cargo.toml          # every crate carries one
+```
+
+A tag is not reversible in any way that matters: people will have fetched it.
+Deleting and re-pushing the same tag leaves anyone who installed in between on
+a build nobody can reproduce.
+
 ## Verify the way a user experiences it
 
 Do this on a machine that is not the one you built on, from a directory that is
