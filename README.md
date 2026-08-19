@@ -116,9 +116,9 @@ zc doctor  # everything probed and concluded, as Markdown for a bug report
 
 | | |
 |---|---|
-| median error, per machine | **9.6%** |
-| machines | 6 (5 hypervisor, 1 bare metal), 8 runs |
-| measurement landed inside the published range | 62.5% |
+| median error, per machine | **7.1%** |
+| machines | 7 (6 hypervisor, 1 bare metal), 11 runs |
+| measurement landed inside the published range | 54.5% |
 
 This is **pre-1.0, and the Phase 0 gate has not passed.** The gate is median
 error under 25% across at least 5 machines *including 2 on bare metal*. The
@@ -132,10 +132,19 @@ real machine that is not this one.** If you have a Windows laptop, a Linux
 desktop, or an old Intel Mac, that is the single most valuable thing anyone can
 contribute right now, and it takes about twenty minutes.
 
-One machine (a macOS VM) is currently missing by 410% and is not being hidden:
-it is in the dataset, dragging the number down, until somebody understands why.
-Ranges are wide on purpose while the evidence is thin, and they narrow only as
-machines arrive — never by hand.
+**Read the second number, not the first.** The published range claims to be a
+90% interval and only 54.5% of measurements land inside it, so the ranges are
+currently too narrow — a real, stated promise that is measurably not being kept.
+The cause is visible in the data: on the CPU backend, measured efficiency runs
+from 0.135 to 0.904 across eight runs, a **6.7× spread**, and every one of those
+machines is a hypervisor guest. Predicting CPU-backend decode inside a VM to a
+useful precision may simply not be possible, and if so the honest fix is a wider
+range and a louder warning, not a better guess. The Metal backend, on real
+hardware, is tight by comparison.
+
+One machine (a macOS VM) is missing by 287% and is not being hidden: it is in
+the dataset, dragging the number down, until somebody understands why. Ranges
+narrow only as machines arrive — never by hand.
 
 Adding a machine is the single most useful contribution right now, and it is
 three commands:
