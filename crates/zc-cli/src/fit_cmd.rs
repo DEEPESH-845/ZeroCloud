@@ -178,10 +178,15 @@ pub fn read_text(paths: &[std::path::PathBuf]) -> String {
 /// What `zc fit` and `zc gate` say they read. Naming the community count
 /// separately is the point: it is how a contributor sees their record arrive.
 fn describe_sources(paths: &[std::path::PathBuf]) -> String {
+    // Home-relative, because this string is printed by `zc fit`, `zc gate`
+    // *and* embedded verbatim in `zc doctor` -- which people paste into public
+    // issues. Redacting at the one place all three read from is the only way
+    // this stays fixed when a fourth caller appears.
+    let p = |i: usize| zc_report::redact_home(&paths[i].display().to_string());
     match paths.len() {
         0 => "no dataset".to_string(),
-        1 => paths[0].display().to_string(),
-        n => format!("{}, plus {} community record(s)", paths[0].display(), n - 1),
+        1 => p(0),
+        n => format!("{}, plus {} community record(s)", p(0), n - 1),
     }
 }
 
@@ -227,7 +232,14 @@ pub fn summary_text(paths: &[std::path::PathBuf]) -> String {
     // installed user has no repo, so `local.jsonl` is a path they would go
     // looking for. The coefficients they see come from the dataset compiled
     // into the binary, plus their own runs once they have any.
-    let _ = writeln!(o, "== fitted coefficients ==  ({})\n", describe_dataset(paths));
+    // The dataset path goes on its own wrapped line: it is variable length, so
+    // any single-line form runs past 80 columns as soon as the user's home
+    // directory is long -- and this block is embedded verbatim in `zc doctor`.
+    let _ = writeln!(o, "== fitted coefficients ==");
+    for l in zc_report::wrap(&describe_dataset(paths), 80, 2) {
+        let _ = writeln!(o, "{l}");
+    }
+    let _ = writeln!(o);
     let _ = writeln!(
         o,
         "  {:<24} {:>7} {:>9} {:>9} {:>9}  confidence",

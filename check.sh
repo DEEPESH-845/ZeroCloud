@@ -58,4 +58,57 @@ if ZC_VERSION='https://github.com/x/releases' ZC_DRY_RUN=1 sh install.sh >/dev/n
 fi
 echo "rejects a URL-shaped tag"
 
+echo "== non-tty output =="
+# The TUI is default-on for a human. Everything else -- a pipe, a redirect,
+# --json, CI, an agent -- must still get the plain renderer. These run piped,
+# so if a TUI escape sequence ever reaches stdout it fails right here.
+cargo build --release --quiet
+if ./target/release/zc check --top 3 2>/dev/null | grep -q "$(printf '\033')"; then
+  echo "escape sequences leaked into piped stdout"; exit 1
+fi
+./target/release/zc check --json 2>/dev/null | python3 -m json.tool >/dev/null \
+  || { echo "--json is not valid JSON"; exit 1; }
+# Progress writes to stderr and only on a terminal; piped it must be silent.
+if [ -s /dev/stdin ] 2>/dev/null; then :; fi
+if [ "$(./target/release/zc check --top 1 2>&1 >/dev/null | wc -c)" -ne 0 ]; then
+  echo "progress wrote to a non-tty stderr"; exit 1
+fi
+# --tui with nowhere to draw is an error, never a silent downgrade.
+if ./target/release/zc check --tui </dev/null >/dev/null 2>&1; then
+  echo "--tui succeeded without a terminal"; exit 1
+fi
+# No line of `zc check` may exceed 80 columns -- the table wrapped hardest on
+# the low-end machines this tool is for.
+if ./target/release/zc check --all 2>/dev/null | awk 'length>80' | grep -q .; then
+  echo "a row ran past 80 columns"; exit 1
+fi
+# No line of terminal output may exceed 80 columns. `zc doctor` is exempt --
+# it is Markdown for a GitHub issue, where soft wrap is correct -- and so is
+# the share URL, which must stay one copy-pasteable token.
+for c in "check" "check --all" "fit" "gate" "--help"; do
+  # shellcheck disable=SC2086
+  if ./target/release/zc $c 2>/dev/null | awk 'length>80' | grep -q .; then
+    echo "a line of \`zc $c\` ran past 80 columns"; exit 1
+  fi
+done
+echo "plain when piped, silent stderr, 80 columns"
+
+echo "== no account name in any output =="
+# `zc doctor` is documented as paste-into-a-public-issue and `--json` gets
+# attached to bug reports, so no surface may print the user's home path. Run
+# from a temp directory: inside the repo the calibration file resolves to a
+# relative path and the leak would hide.
+tmp=$(mktemp -d)
+zcbin="$PWD/target/release/zc"
+leak=0
+for c in "check" "check --json" "doctor" "fit" "gate" "share --print"; do
+  # shellcheck disable=SC2086
+  if (cd "$tmp" && "$zcbin" $c 2>/dev/null) | grep -qF "$HOME"; then
+    echo "\`zc $c\` printed \$HOME"; leak=1
+  fi
+done
+rm -rf "$tmp"
+[ "$leak" -eq 0 ] || exit 1
+echo "no \$HOME in check, json, doctor, fit, gate, share"
+
 echo "OK"

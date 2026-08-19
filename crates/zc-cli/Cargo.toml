@@ -14,6 +14,7 @@ zc-bench = { path = "../zc-bench" }
 zc-model = { path = "../zc-model" }
 zc-runtime = { path = "../zc-runtime" }
 zc-report = { path = "../zc-report" }
+zc-tui = { path = "../zc-tui" }
 
 # Only for restoring the default SIGPIPE disposition. Rust's runtime ignores
 # SIGPIPE so that writes return EPIPE, which `println!` then panics on -- so

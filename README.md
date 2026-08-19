@@ -21,30 +21,77 @@ isn't.
 $ zc check --top 8
 
 == hardware ==
-  Apple M5   4P+6E   16.00 GiB total / 3.18 GiB available   unified
+  Apple M5   4P+6E   16.00 GiB total / 3.93 GiB available   unified
   /System/Volumes/Data on apfs (NVMe)
   Apple M5   integrated (shares system memory)
 
 == measured ==
-  ram          129 GB/s peak @10t   [1t:75  2t:82  4t:82  10t:129]
-  compute      427 GFLOPS f32 @4t   413 GOPS int8 (0.97x)
-  disk         5.02 GB/s random 128K @QD16   167K IOPS 4K
-  budget       12.80 GiB on an idle machine   (1.58 GiB free right now)
+  ram          125 GB/s peak @10t   [1t:75  2t:80  4t:87  10t:125]
+  compute      427 GFLOPS f32 @4t   409 GOPS int8 (0.96x)
+  disk         5.04 GB/s random 128K @QD16   164K IOPS 4K
+  budget       12.80 GiB on an idle machine   (2.33 GiB free right now)
 
-== predictions ==  (Metal backend, 129 GB/s, KV at F16, 2048-token prompt)
+== predictions ==  (Metal backend, 125 GB/s, KV at F16, 2048-token prompt)
   assumes an otherwise-idle machine
-       model                        quant   decode tok/s max ctx   TTFT  conf
-  OK   smollm2-360m                 Q8_0     249.5-415.8      8K   0.1s  low
-  OK   qwen3-0.6b                   Q8_0     150.8-251.3     40K   0.3s  low
-  OK   smollm2-1.7b                 Q8_0       53.0-88.3      8K   0.6s  low
-  OK   qwen3-1.7b                   Q8_0       52.6-87.6     40K   0.7s  low
-  OK   qwen2.5-3b                   Q8_0       26.7-44.4     32K   1.1s  low
-  OK   phi-3.5-mini                 Q8_0       23.7-39.6     23K   1.4s  low
-  OK   phi-4-mini                   Q8_0       23.6-39.3     70K   1.4s  low
-  OK   qwen3-4b                     Q8_0       22.5-37.5     40K   1.5s  low
+       model        quant    decode t/s   ctx  TTFT conf   %RAM
+  OK   smollm2-360m Q8_0    230.0-383.3    8K  0.1s low
+  OK   qwen3-0.6b   Q8_0    139.0-231.6   40K  0.3s low
+  OK   smollm2-1.7b Q8_0      48.8-81.4    8K  0.6s low
+  OK   qwen3-1.7b   Q8_0      48.4-80.7   40K  0.7s low
+  OK   qwen2.5-3b   Q8_0      24.6-41.0   32K  1.1s low
+  OK   phi-3.5-mini Q8_0      21.9-36.5   23K  1.4s low
+  OK   phi-4-mini   Q8_0      21.8-36.3   70K  1.4s low
+  OK   qwen3-4b     Q8_0      20.8-34.6   40K  1.5s low
 
-  showing 8 of 26 - ranked by verdict, then speed, then context (--all for every quant)
+  showing 8 of 26 - ranked by verdict, then speed, then context
+  --all for every quantisation, --top N to change the cut
 ```
+
+On a terminal that is not the whole story — `zc` with no arguments opens the
+same data as a browsable table, where every row explains itself. This is a real
+capture, at 78 columns, after filtering to one model and pressing enter:
+
+```
+$ zc
+
+  zc 0.1.0  Apple M5 · metal · 16 GiB
+  129 GB/s ram · 5.0 GB/s disk · 429 GFLOPS · KV f16
+──────────────────────────────────────────────────────────────────────────────
+    MODEL         QUANT    decode t/s   ctx  TTFT conf   %RAM
+> ◐ qwen3-30b-a3b Q4_K_M     8.3-13.9    2K  1.2s low     84%
+──────────────────────────────────────────────────────────────────────────────
+  qwen3-30b-a3b · Q4_K_M   8.3-13.9 tok/s
+
+  weights       17.35 GiB    84% resident in RAM
+  spill          2.78 GiB    streams at 5.0 GB/s
+  bandwidth       129 GB/s   measured on this machine
+  eta           0.875        fitted, confidence low
+  context          2K        KV f16 at 0.09 MiB/token
+  TTFT           1.2s        for a 2048-token prompt
+──────────────────────────────────────────────────────────────────────────────
+  1 of 26 · sort verdict · enter why · / filter · a quants · ? keys · q quit
+```
+
+That pane is the point. Other tools print a score; `zc` measured your machine,
+so it can print the derivation and let you check it. Those weights do not fit,
+2.78 GiB of them stream from a disk measured at 5.0 GB/s, and that is why the
+prediction is 8.3-13.9 tok/s rather than something faster.
+
+| key | does |
+|---|---|
+| `↑` `↓` or `j` `k` | move |
+| `enter` | show how the number was derived |
+| `/` | filter by name, `esc` clears |
+| `s` | sort: verdict, speed, context |
+| `a` | every quantisation, not just the best per model |
+| `?` | list the keys |
+| `q` | quit, leaving the report in your scrollback |
+
+The table only appears when a human is there to read it. Piped, redirected, or
+with `--json`, `zc` prints plain text exactly as it always has, so scripts and
+agents are unaffected. `--tui` forces it on where the terminal is not detected,
+`--no-tui` forces it off, and `ZC_ASCII=1` swaps the box-drawing glyphs for
+ASCII.
 
 ## Install
 

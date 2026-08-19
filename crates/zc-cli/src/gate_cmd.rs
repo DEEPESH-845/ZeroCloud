@@ -34,10 +34,15 @@ pub fn run() -> i32 {
 
     let g = Gate::from_records(&records);
 
-    println!(
-        "== phase 0 gate ==  ({})\n",
-        crate::fit_cmd::describe_dataset(std::slice::from_ref(&curated))
-    );
+    println!("== phase 0 gate ==");
+    for l in zc_report::wrap(
+        &crate::fit_cmd::describe_dataset(std::slice::from_ref(&curated)),
+        80,
+        2,
+    ) {
+        println!("{l}");
+    }
+    println!();
     println!(
         "  {} runs on {} machine(s){}",
         g.runs,
@@ -51,7 +56,7 @@ pub fn run() -> i32 {
 
     if g.runs == 0 {
         for b in g.blockers() {
-            println!("\n  BLOCKED  {b}");
+            print_blocker(b);
         }
         return FAILED;
     }
@@ -114,7 +119,23 @@ pub fn run() -> i32 {
         return 0;
     }
     for b in g.blockers() {
-        println!("\n  BLOCKED  {b}");
+        print_blocker(b);
     }
     FAILED
+}
+
+/// `BLOCKED` plus a reason, wrapped.
+///
+/// The bare-metal blocker is 123 columns as one line, and it is the message
+/// every user who runs `zc gate` today sees.
+fn print_blocker(reason: String) {
+    let lines = zc_report::wrap(&reason, 80 - 11, 0);
+    println!();
+    for (i, l) in lines.iter().enumerate() {
+        if i == 0 {
+            println!("  BLOCKED  {l}");
+        } else {
+            println!("           {l}");
+        }
+    }
 }

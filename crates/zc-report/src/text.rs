@@ -198,11 +198,15 @@ pub fn render_with(r: &Report, color: bool) -> String {
             "  no calibration data yet - ranges are wide priors. Run `zc verify`.",
         );
     }
+    // Width follows the rows actually shown. Fixed at 28 this table ran to 93
+    // columns on any row that spills to disk -- which is the row a low-end
+    // machine shows, so it wrapped hardest on the hardware this tool is for.
+    let mw = crate::model_col_width(&r.models);
     push(
         p,
         &format!(
-            "  {:<4} {:<28} {:<7} {:>12} {:>7} {:>6}  {:<6}",
-            "", "model", "quant", "decode tok/s", "max ctx", "TTFT", "conf"
+            "  {:<4} {:<mw$} {:<7} {:>11} {:>5} {:>5} {:<6} {:>4}",
+            "", "model", "quant", "decode t/s", "ctx", "TTFT", "conf", "%RAM"
         ),
     );
 
@@ -218,30 +222,14 @@ pub fn render_with(r: &Report, color: bool) -> String {
             Verdict::WontFit => ("XX", RED),
         };
         let mark = paint(&format!("{mark:<4}"), hue, color);
-        let ctx = if pr.max_context == 0 {
-            "-".to_string()
-        } else if pr.max_context >= 1024 {
-            format!("{}K", pr.max_context / 1024)
-        } else {
-            pr.max_context.to_string()
-        };
-        let speed = if pr.verdict == Verdict::WontFit {
-            "-".to_string()
-        } else {
-            format!("{:.1}-{:.1}", pr.decode_tok_s.0, pr.decode_tok_s.1)
-        };
-        // TTFT is unknown until a real run has been measured on this backend.
-        // A dash is honest; a derived number would be wrong by an unknown
-        // factor (see zc-model::fit::prefill_scale).
-        let ttft = match pr.ttft_s {
-            Some(t) if t < 100.0 => format!("{t:.1}s"),
-            Some(t) => format!("{t:.0}s"),
-            None => "-".to_string(),
-        };
+        // Shared with the TUI so one prediction cannot render two ways.
+        let ctx = crate::fmt_ctx(pr);
+        let speed = crate::fmt_speed(pr);
+        let ttft = crate::fmt_ttft(pr);
         push(
             p,
             &format!(
-                "  {} {:<28} {:<7} {:>12} {:>7} {:>6}  {:<6}{}",
+                "  {} {:<mw$} {:<7} {:>11} {:>5} {:>5} {:<6} {:>4}",
                 mark,
                 row.model_id,
                 row.quant.name,
@@ -249,15 +237,15 @@ pub fn render_with(r: &Report, color: bool) -> String {
                 ctx,
                 ttft,
                 pr.confidence.label(),
-                // Appended without a separator so a fully-resident row ends at
-                // the last character it printed. Trailing spaces on every line
-                // break copy-paste out of a terminal and show up as whitespace
-                // diffs in any report a user pastes into an issue.
-                if pr.resident_fraction < 0.999 {
-                    format!("  {:.0}% resident", pr.resident_fraction * 100.0)
-                } else {
-                    String::new()
-                }
+                // A column rather than a sentence. "  89% resident" cost 14
+                // columns and pushed a spilling row to 93; "89%" under a %RAM
+                // header says the same thing in four and fits at any model
+                // width the catalog can produce.
+                //
+                // Blank rather than "100%" when everything is resident: the
+                // eye should land on the rows that spill, and `push` trims the
+                // trailing space so a full row still ends where it stops.
+                crate::fmt_resident(pr)
             ),
         );
     }

@@ -96,9 +96,37 @@ pub fn probe() -> Machine {
     let mut counts = vec![1usize, 2, p_threads, cpu.physical as usize];
     counts.sort_unstable();
     counts.dedup();
+    // The three measurements are the slow part -- seconds on a fast laptop,
+    // far longer on the DRAM-less drives this tool targets -- and the terminal
+    // used to sit dead for all of it. Announce each before running it.
+    // Nothing is written when stderr is not a terminal.
+    let mut pr = zc_report::progress::Progress::new(zc_report::charset::detect());
+
+    pr.start("ram");
     let ram = ram::measure(&counts);
+    pr.done(&format!(
+        "{:.0} GB/s peak @{}t",
+        ram.peak_gbs, ram.peak_threads
+    ));
+
+    pr.start("compute");
     let compute = compute::measure(p_threads);
+    pr.done(&format!(
+        "{:.0} GFLOPS f32 @{}t",
+        compute.gflops_nt, compute.threads
+    ));
+
+    pr.start("disk");
     let disk = disk::measure(storage.bench_file.as_deref(), &storage.model_dir, 16).ok();
+    match &disk {
+        Some(d) => pr.done(&format!(
+            "{:.2} GB/s random 128K @QD{}",
+            d.rand_128k_qdn_gbs, d.queue_depth
+        )),
+        // Unmeasurable is a real outcome here, not an error to hide: the
+        // prediction drops streaming speed rather than substituting one.
+        None => pr.done("not measurable"),
+    }
 
     let reserved = mem.firmware_reserved.unwrap_or(0);
     let budget_idle = predict::potential_budget(mem.total, env.memory_ceiling, reserved);
