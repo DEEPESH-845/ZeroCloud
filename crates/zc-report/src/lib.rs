@@ -10,6 +10,7 @@
 //! parallel struct would mean listing every field twice and keeping the copies
 //! in sync forever, which is the same drift problem one layer down.
 
+pub mod charset;
 pub mod json;
 pub mod markdown;
 pub mod text;
