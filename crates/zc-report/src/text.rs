@@ -222,26 +222,10 @@ pub fn render_with(r: &Report, color: bool) -> String {
             Verdict::WontFit => ("XX", RED),
         };
         let mark = paint(&format!("{mark:<4}"), hue, color);
-        let ctx = if pr.max_context == 0 {
-            "-".to_string()
-        } else if pr.max_context >= 1024 {
-            format!("{}K", pr.max_context / 1024)
-        } else {
-            pr.max_context.to_string()
-        };
-        let speed = if pr.verdict == Verdict::WontFit {
-            "-".to_string()
-        } else {
-            format!("{:.1}-{:.1}", pr.decode_tok_s.0, pr.decode_tok_s.1)
-        };
-        // TTFT is unknown until a real run has been measured on this backend.
-        // A dash is honest; a derived number would be wrong by an unknown
-        // factor (see zc-model::fit::prefill_scale).
-        let ttft = match pr.ttft_s {
-            Some(t) if t < 100.0 => format!("{t:.1}s"),
-            Some(t) => format!("{t:.0}s"),
-            None => "-".to_string(),
-        };
+        // Shared with the TUI so one prediction cannot render two ways.
+        let ctx = crate::fmt_ctx(pr);
+        let speed = crate::fmt_speed(pr);
+        let ttft = crate::fmt_ttft(pr);
         push(
             p,
             &format!(
@@ -261,11 +245,7 @@ pub fn render_with(r: &Report, color: bool) -> String {
                 // Blank rather than "100%" when everything is resident: the
                 // eye should land on the rows that spill, and `push` trims the
                 // trailing space so a full row still ends where it stops.
-                if pr.resident_fraction < 0.999 {
-                    format!("{:.0}%", pr.resident_fraction * 100.0)
-                } else {
-                    String::new()
-                }
+                crate::fmt_resident(pr)
             ),
         );
     }

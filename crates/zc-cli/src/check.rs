@@ -59,6 +59,7 @@ pub fn run(
     top: Option<usize>,
     all_quants: bool,
     as_json: bool,
+    tui: bool,
 ) -> i32 {
     // The catalog is borrowed from by every Row, so it has to outlive them.
     let specs = catalog::load();
@@ -77,11 +78,27 @@ pub fn run(
     }
     models.sort_by_key(zc_report::rank);
     let total_rows = models.len();
-    if let Some(n) = top {
+    // The row limit exists so a plain table does not bury the models a
+    // constrained machine can actually run. In the TUI the user scrolls, so
+    // cutting the list would hide rows with no way to reach them.
+    if let Some(n) = top.filter(|_| !tui) {
         models.truncate(n);
     }
 
     let report = report(m, fit, kv, models, total_rows);
+
+    if tui {
+        let cs = zc_report::charset::detect();
+        // A terminal failure must not cost the user their answer: fall through
+        // to the static report rather than exiting.
+        if zc_tui::run::run(&report, cs).is_ok() {
+            // The alternate screen is gone by now. Print the report so the
+            // answer is in the scrollback rather than lost with the screen.
+            print!("{}", zc_report::text::render(&report));
+            return 0;
+        }
+    }
+
     print!(
         "{}",
         if as_json {
