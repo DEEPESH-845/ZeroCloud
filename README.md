@@ -2,9 +2,15 @@
 
 **What can this laptop actually run, and how fast?**
 
-`zc` measures your machine for 20 seconds and predicts decode speed, time to
-first token, and maximum usable context for local LLMs. No account, no upload,
+`zc` measures your machine in about two seconds and predicts decode speed,
+time to first token, and maximum usable context for local LLMs. No account, no upload,
 no network call at all.
+
+That two seconds is measured, not estimated: 1.85s across three runs on the
+Apple Silicon laptop the sample output below came from. Only the disk probe is
+time-boxed, so the RAM and compute benchmarks take longer on slower hardware —
+how much longer is not yet known, because nobody has measured it on a slow
+machine. That is one of the things a contributed record tells us.
 
 It is built for the machines that get told "you need a better GPU": 8 GB
 Windows laptops, old Intel Macs, single-channel budget hardware, WSL2, and
