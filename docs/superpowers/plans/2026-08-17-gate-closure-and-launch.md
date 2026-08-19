@@ -10,14 +10,23 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-17-gate-closure-and-launch-design.md`
 
-## Status (2026-08-17)
+## Status (2026-08-19)
 
 - **Task 1** done — `fit_cmd::resolve()`, 3 tests. `0d69d7f`
 - **Task 2** done — record archived, machine re-measured at -33.2%, reads bare metal. `997dc73`
 - **Task 3** done — `v0.1.0-rc1` published with all 10 assets; `aarch64-musl` links via `rust-lld` as designed. `86c0850`
 - **Task 4** done — installer verified end to end against the real prerelease. `71eea9d`
-- **Task 5** runbook written (`d5c46ac`); campaign not started — needs `gh auth login`, then hardware.
-- **Task 6** blocked on Task 5, by design.
+- **Task 5** runbook written (`d5c46ac`); CI machines harvested (3 of 5, all VMs).
+  Gate reads **9.6% median over 8 runs on 6 machines**, `within_range` 62.5%.
+  **Step 7 resolved:** the two fresh runs on the bare-metal Mac both landed
+  inside a range whose eta had been moved by `zc fit` from a single record
+  (0.922 assumed, 0.888 and 0.863 measured). The old 50% `within_range` was a
+  lagging figure computed against the shipped prior — no coverage-factor change
+  is warranted, and none was made.
+  **Remaining blocker is `MIN_BARE_METAL`: 1 of 2.** It needs one more physical
+  machine running `zc verify`; no code closes it.
+- **Task 6** README written and its accuracy table updated as the dataset moves.
+  The tag in Step 4 stays unpushed until the gate exits 0.
 
 **Gap found during Task 4's end-to-end test:** the shipped binary carries no
 calibration data, so an installed user sees `no calibration data yet - ranges are
