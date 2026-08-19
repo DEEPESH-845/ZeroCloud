@@ -6,6 +6,7 @@
 use zc_model::{fit::Confidence, Fit};
 
 const DEFAULT_DIR: &str = "data/calibration";
+const APP: &str = "zerocloud";
 const LOCAL: &str = "local.jsonl";
 const CURATED: &str = "gate.jsonl";
 const COMMUNITY: &str = "community";
@@ -14,7 +15,67 @@ const COMMUNITY: &str = "community";
 ///
 /// Overridable so tests and validation runs cannot contaminate a real dataset.
 pub fn path() -> std::path::PathBuf {
-    env_override().unwrap_or_else(|| resolve(std::path::Path::new(DEFAULT_DIR)))
+    env_override().unwrap_or_else(|| resolve(&base_dir()))
+}
+
+/// Which directory holds this machine's calibration data.
+///
+/// **This used to be `data/calibration` unconditionally, relative to the working
+/// directory, and that broke the share loop for every installed user.** `zc
+/// verify` in `~/Downloads` wrote `~/Downloads/data/calibration/local.jsonl`;
+/// `cd` anywhere and `zc share` reported "cannot read
+/// data/calibration/local.jsonl". Two runs from two directories were two
+/// datasets, `zc gate` named a path the user would go looking for and never
+/// find, and a tool installed by `curl | sh` littered wherever it was invoked.
+fn base_dir() -> std::path::PathBuf {
+    choose_base(std::path::Path::new(DEFAULT_DIR), user_data_dir())
+}
+
+/// A checkout's own dataset wins over the per-user one.
+///
+/// Inside the repository `data/calibration/gate.jsonl` *is* the dataset: it is
+/// what contributors edit, what CI recomputes the published accuracy number
+/// from, and what `zc share` names destination paths relative to. Outside one,
+/// there is no repository and the records belong to the user.
+fn choose_base(repo: &std::path::Path, user: Option<std::path::PathBuf>) -> std::path::PathBuf {
+    if repo.join(CURATED).is_file() {
+        return repo.to_path_buf();
+    }
+    user.unwrap_or_else(|| repo.to_path_buf())
+}
+
+/// The per-user data directory, by platform convention.
+///
+/// `XDG_DATA_HOME` is honoured first on every platform, including macOS: a user
+/// who has set it has said where they want application data, and second-guessing
+/// that is not our business.
+fn user_data_dir() -> Option<std::path::PathBuf> {
+    if let Some(x) = std::env::var_os("XDG_DATA_HOME").filter(|v| !v.is_empty()) {
+        return Some(std::path::PathBuf::from(x).join(APP));
+    }
+    #[cfg(windows)]
+    {
+        let base = std::env::var_os("LOCALAPPDATA")
+            .filter(|v| !v.is_empty())
+            .map(std::path::PathBuf::from)
+            .or_else(|| {
+                std::env::var_os("USERPROFILE")
+                    .filter(|v| !v.is_empty())
+                    .map(|h| std::path::PathBuf::from(h).join("AppData").join("Local"))
+            })?;
+        Some(base.join(APP))
+    }
+    #[cfg(not(windows))]
+    {
+        let home = std::path::PathBuf::from(
+            std::env::var_os("HOME").filter(|v| !v.is_empty())?,
+        );
+        if cfg!(target_os = "macos") {
+            Some(home.join("Library").join("Application Support").join(APP))
+        } else {
+            Some(home.join(".local").join("share").join(APP))
+        }
+    }
 }
 
 /// Where `zc verify` *writes* a new measurement.
@@ -29,7 +90,7 @@ pub fn path() -> std::path::PathBuf {
 /// calibrate workflow uploads `local.jsonl` as its artifact, so a `verify` that
 /// wrote anywhere else would silently produce an empty dataset.
 pub fn record_path() -> std::path::PathBuf {
-    env_override().unwrap_or_else(|| record_in(std::path::Path::new(DEFAULT_DIR)))
+    env_override().unwrap_or_else(|| record_in(&base_dir()))
 }
 
 /// The write target within a calibration directory. Unconditional by design —
@@ -66,7 +127,7 @@ fn resolve(dir: &std::path::Path) -> std::path::PathBuf {
 pub fn sources() -> Vec<std::path::PathBuf> {
     match env_override() {
         Some(p) => vec![p],
-        None => sources_in(std::path::Path::new(DEFAULT_DIR)),
+        None => sources_in(&base_dir()),
     }
 }
 
@@ -260,6 +321,41 @@ mod tests {
             "zc verify must append to local.jsonl, never to the curated gate.jsonl"
         );
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// Inside a checkout the repository's dataset is the dataset -- it is what
+    /// contributors edit and what CI recomputes the published number from.
+    #[test]
+    fn a_checkout_uses_its_own_dataset() {
+        let d = scratch("checkout");
+        std::fs::write(d.join("gate.jsonl"), "").unwrap();
+        let elsewhere = d.join("user-data");
+        assert_eq!(super::choose_base(&d, Some(elsewhere.clone())), d);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// Outside one there is no repository, and writing `data/calibration` into
+    /// whatever directory the user happened to be standing in is what broke the
+    /// share loop: `zc verify` in ~/Downloads then `zc share` anywhere else
+    /// reported "cannot read data/calibration/local.jsonl".
+    #[test]
+    fn outside_a_checkout_the_records_belong_to_the_user() {
+        let d = scratch("nocheckout");
+        let user = d.join("user-data");
+        assert_eq!(super::choose_base(&d, Some(user.clone())), user);
+        // And with nowhere to put them -- no HOME, no XDG_DATA_HOME -- the old
+        // relative path is still better than losing the measurement.
+        assert_eq!(super::choose_base(&d, None), d);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// The per-user directory must be absolute and namespaced, or it is just the
+    /// relative-path bug with extra steps.
+    #[test]
+    fn the_user_directory_is_absolute_and_namespaced() {
+        let dir = super::user_data_dir().expect("a test environment has a home");
+        assert!(dir.is_absolute(), "{dir:?} must be absolute");
+        assert_eq!(dir.file_name().and_then(|s| s.to_str()), Some("zerocloud"));
     }
 
     /// A merged submission has to be read without anyone editing a path list,

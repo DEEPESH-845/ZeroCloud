@@ -116,9 +116,9 @@ zc doctor  # everything probed and concluded, as Markdown for a bug report
 
 | | |
 |---|---|
-| median error, per machine | **6.3%** |
-| machines | 8 (7 hypervisor, 1 bare metal), 14 runs |
-| measurement landed inside the published range | 64.3% |
+| median error, per machine | **9.4%** |
+| machines | 8 (7 hypervisor, 1 bare metal), 15 runs |
+| measurement landed inside the published range | 66.7% |
 
 This is **pre-1.0, and the Phase 0 gate has not passed.** The gate is median
 error under 25% across at least 5 machines *including 2 on bare metal*. The
@@ -148,11 +148,11 @@ constant to compensate for it, and it moved the CPU range from ±45% to ±78% �
 which is the honest answer: predicting CPU decode inside a VM is imprecise, and
 the range now says so. The Metal backend, on real hardware, is unchanged.
 
-The 64.3% above is still a *lagging* figure — `within_range` is recorded at
+The 66.7% above is still a *lagging* figure — `within_range` is recorded at
 prediction time, so most of those predictions were made with the old width and
-no edit can change them. The three records taken *after* the fix all landed
+no edit can change them. All four records taken *after* the fix landed
 inside their range, including the pathological macOS VM that missed by 254%.
-Three points is not proof, but it is the right direction, and the figure will
+Four points is not proof, but it is the right direction, and the figure will
 keep being measured rather than asserted.
 
 One machine (a macOS VM) is missing by 287% and is not being hidden: it is in
@@ -198,8 +198,8 @@ known. `zc gate` prints both figures, always.
 ## Privacy
 
 Zero network by default. `zc check`, `zc verify`, `zc fit`, `zc gate`,
-`zc doctor` and `zc share` make no outbound connection of any kind; there is no telemetry and
-no analytics. `zc verify` writes one line to `data/calibration/local.jsonl` on
+`zc doctor` and `zc share` make no outbound connection of any kind; there is
+no telemetry and no analytics. `zc verify` writes one line to a `local.jsonl` it names in full on
 your own disk and nowhere else.
 
 `zc share` is the only command that sends anything anywhere, and it does not do
