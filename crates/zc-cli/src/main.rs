@@ -102,8 +102,9 @@ fn main() {
     // Global flags are stripped before dispatch so they may appear anywhere.
     let as_json = take_flag(&mut args, "--json");
     let runtime = take_value(&mut args, "--runtime");
-    let kv = match take_value(&mut args, "--kv") {
-        Some(v) => match zc_model::KvPrecision::parse(&v) {
+    let kv_arg = take_value(&mut args, "--kv");
+    let kv = match &kv_arg {
+        Some(v) => match zc_model::KvPrecision::parse(v) {
             Some(p) => p,
             None => {
                 eprintln!("unknown --kv value '{v}' (expected f16, q8 or q4)");
@@ -118,7 +119,8 @@ fn main() {
     const DEFAULT_TOP: usize = 20;
     // `--all` means both: every quantisation, and no row limit.
     let show_all = take_flag(&mut args, "--all");
-    let top = match take_value(&mut args, "--top") {
+    let top_arg = take_value(&mut args, "--top");
+    let top = match &top_arg {
         Some(v) => match v.parse::<usize>() {
             Ok(n) if n > 0 => Some(n),
             _ => {
@@ -150,6 +152,26 @@ fn main() {
         eprintln!("unknown option '{bad}' -- run `zc --help`");
         std::process::exit(2);
     }
+    // A known flag on a command that ignores it fails exactly the way an
+    // unknown flag did: `zc doctor --json` printed Markdown and exited 0, so
+    // an agent piping it into `jq` got a parse error rather than being told
+    // the flag does not apply there. Same rule, same message shape.
+    let supplied = [
+        ("--json", as_json),
+        ("--runtime", runtime.is_some()),
+        ("--kv", kv_arg.is_some()),
+        ("--top", top_arg.is_some()),
+        ("--all", show_all),
+        ("--record", record.is_some()),
+        ("--print", print_only),
+    ];
+    for (flag, present) in supplied {
+        if present && !accepts(cmd, flag) {
+            eprintln!("`zc {cmd}` does not take {flag} -- run `zc --help`");
+            std::process::exit(2);
+        }
+    }
+
     // `fit` and `gate` read a file; no hardware probe needed.
     if cmd == "fit" {
         std::process::exit(fit_cmd::run());
@@ -190,6 +212,25 @@ fn main() {
     std::process::exit(code);
 }
 
+/// Which flags each command actually reads.
+///
+/// Kept as one table rather than a check at each use site, because the failure
+/// this prevents is a *missing* check: every flag is stripped globally so it
+/// may appear anywhere, and a command that never looks at one would otherwise
+/// accept it in silence.
+fn accepts(cmd: &str, flag: &str) -> bool {
+    let ok: &[&str] = match cmd {
+        "check" => &["--json", "--kv", "--top", "--all"],
+        "verify" => &["--runtime", "--kv"],
+        "doctor" => &["--kv"],
+        "share" => &["--record", "--print"],
+        // `fit` and `gate` read the calibration file and report it. Neither
+        // predicts anything, so no prediction flag applies.
+        _ => &[],
+    };
+    ok.contains(&flag)
+}
+
 /// Remove `flag` and the value after it, if present.
 ///
 /// A flag with nothing after it is an error, not an absent flag: `zc check
@@ -213,5 +254,39 @@ fn take_flag(args: &mut Vec<String>, flag: &str) -> bool {
             true
         }
         None => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// Every flag the help text lists for a command must be accepted by it,
+    /// and flags it does not read must be refused. `zc doctor --json` used to
+    /// print Markdown and exit 0.
+    #[test]
+    fn flags_are_scoped_to_the_commands_that_read_them() {
+        for (cmd, flag) in [
+            ("check", "--json"),
+            ("check", "--all"),
+            ("verify", "--runtime"),
+            ("verify", "--kv"),
+            ("doctor", "--kv"),
+            ("share", "--record"),
+            ("share", "--print"),
+        ] {
+            assert!(super::accepts(cmd, flag), "{cmd} should accept {flag}");
+        }
+        for (cmd, flag) in [
+            ("doctor", "--json"),
+            ("doctor", "--top"),
+            ("fit", "--json"),
+            ("fit", "--kv"),
+            ("gate", "--json"),
+            ("share", "--json"),
+            ("check", "--runtime"),
+            ("check", "--print"),
+            ("verify", "--top"),
+        ] {
+            assert!(!super::accepts(cmd, flag), "{cmd} must refuse {flag}");
+        }
     }
 }
