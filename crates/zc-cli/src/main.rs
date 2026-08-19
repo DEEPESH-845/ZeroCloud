@@ -3,6 +3,7 @@ mod doctor;
 mod fit_cmd;
 mod gate_cmd;
 mod machine;
+mod share;
 mod verify;
 
 const HELP: &str = "\
@@ -15,6 +16,8 @@ USAGE
                           run a real model and compare against the prediction
     zc fit                show fitted coefficients and how much evidence backs them
     zc gate               how wrong have we been? (exits non-zero until it passes)
+    zc share [--record FILE] [--print]
+                          submit your last `zc verify` measurement upstream
     zc doctor             everything probed, measured and concluded, as Markdown
     zc --help
 
@@ -125,6 +128,10 @@ fn main() {
         None if show_all => None,
         None => Some(DEFAULT_TOP),
     };
+    // `share` reads a record file rather than measuring, so both of its flags
+    // are stripped here with the other globals and never reach the probe.
+    let record = take_value(&mut args, "--record");
+    let print_only = take_flag(&mut args, "--print");
     let cmd = args.first().map(String::as_str).unwrap_or("check");
 
     if matches!(cmd, "-h" | "--help" | "help") {
@@ -149,6 +156,9 @@ fn main() {
     if cmd == "gate" {
         std::process::exit(gate_cmd::run());
     }
+    if cmd == "share" {
+        std::process::exit(share::run(record.as_deref(), print_only));
+    }
     if !matches!(cmd, "check" | "verify" | "doctor") {
         eprintln!("unknown command '{cmd}' -- run `zc --help`");
         std::process::exit(2);
@@ -169,7 +179,7 @@ fn main() {
     // give two different answers if thermal state shifted between them.
     let m = machine::probe();
 
-    let fit = zc_model::Fit::load(&fit_cmd::path());
+    let fit = zc_model::Fit::from_text(&fit_cmd::read_text(&fit_cmd::sources()));
 
     let code = match runtime {
         Some(rt) => verify::run(&m, rt.as_ref(), &fit, kv, args.get(1).map(String::as_str)),

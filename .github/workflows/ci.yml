@@ -49,6 +49,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+      - run: python3 scripts/validate_calibration.py --self-test
+      - run: python3 scripts/validate_calibration.py
       - run: cargo build --release
       # `gate` exits non-zero until Phase 0 passes, which is a status and not a
       # CI failure -- but it must still run without erroring, and printing it

@@ -1,0 +1,28 @@
+# Validate calibration submissions on every pull request that touches them.
+#
+# This is the *only* automated gate on a community record, by design. There is
+# no auto-merge and no bot approval: a check status tells a human whether the
+# file is well-formed and internally consistent, and a human decides whether to
+# trust the machine it came from. Automating the second half would mean
+# publishing an accuracy claim nobody looked at.
+name: calibration-prs
+
+on:
+  pull_request:
+    paths:
+      - "data/calibration/**"
+      - "scripts/validate_calibration.py"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      # Self-test first: a validator whose own fixtures fail cannot be trusted
+      # to have judged the submission, and it would fail open otherwise.
+      - run: python3 scripts/validate_calibration.py --self-test
+      - run: python3 scripts/validate_calibration.py

@@ -10,6 +10,24 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-19-share-loop-design.md`
 
+## Status (2026-08-19) — all six tasks complete
+
+Executed on branch `share-loop`, one commit per task, `./check.sh` green at
+every commit. Three deviations, all recorded in the commits:
+
+1. `mod share;` was declared in Task 1 Step 1 rather than Step 5 — the test
+   module cannot compile until the module exists, so the "watch it fail" step
+   would otherwise have failed for the wrong reason.
+2. Task 2 Step 9 exposed a defect the plan did not anticipate: `Fit::merge`
+   deduped identical record lines but `Gate` did not, so a community file
+   holding a record already in `gate.jsonl` was invisible to the coefficients
+   while counting **twice** toward the published accuracy number. Fixed in the
+   shared reader (`fit_cmd::read_text`) with its own test, rather than in one
+   caller.
+3. The validator gained a cross-tier duplicate check off the back of (2). The
+   readers now dedupe so it moves no number, but merging one would tell a
+   contributor their run landed when nothing was added.
+
 ## Global Constraints
 
 - **A number is measured, derived from measured inputs, or printed as `-`.** No fallback constants, ever.
@@ -56,7 +74,7 @@ Implements spec §1 and §3. Self-contained: no other task depends on it compili
 - Consumes: `zc_model::json::{string, number, boolean}`; `zc_runtime::calibrate::fingerprint(&str) -> String` (FNV-1a-64, 16 lowercase hex); `crate::fit_cmd::record_path() -> PathBuf`.
 - Produces: `share::run(record: Option<&str>, print_only: bool) -> i32`, plus `share::dest_filename(&str) -> Result<String, String>`, `share::share_url(&str, &str) -> String` and `share::encode(&str) -> String` for the tests.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `crates/zc-cli/src/share.rs` containing *only* this test module for now:
 
@@ -143,12 +161,12 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cargo test -p zc-cli share 2>&1 | tail -20`
 Expected: FAIL — `cannot find function 'dest_filename'`, `share_url`, `describe`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 Prepend to `crates/zc-cli/src/share.rs`, above the test module:
 
@@ -333,12 +351,12 @@ pub fn run(record: Option<&str>, print_only: bool) -> i32 {
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `cargo test -p zc-cli share 2>&1 | tail -20`
 Expected: 5 passed.
 
-- [ ] **Step 5: Wire it into the CLI**
+- [x] **Step 5: Wire it into the CLI**
 
 In `crates/zc-cli/src/main.rs`, add `mod share;` to the module list (alphabetical, after `mod machine;`).
 
@@ -366,7 +384,7 @@ Add to `HELP`, after the `zc gate` line:
                           submit your last `zc verify` measurement upstream
 ```
 
-- [ ] **Step 6: Prove it end to end against a real record**
+- [x] **Step 6: Prove it end to end against a real record**
 
 ```bash
 cargo build --release --bin zc
@@ -376,7 +394,7 @@ cargo build --release --bin zc
 
 Expected: the first prints the record, the destination filename and a URL beginning `https://github.com/DEEPESH-845/ZeroCloud/new/main?filename=`. The second prints `cannot read /nonexistent: ...` and `exit: 1`.
 
-- [ ] **Step 7: Full check and commit**
+- [x] **Step 7: Full check and commit**
 
 ```bash
 ./check.sh
@@ -411,7 +429,7 @@ Implements spec §2. The dataset stops being one file.
 - Consumes: nothing from Task 1.
 - Produces: `fit_cmd::sources() -> Vec<PathBuf>` (curated first, then sorted `community/*.jsonl`), `fit_cmd::read_text(&[PathBuf]) -> String`, `fit_cmd::summary_text(&[PathBuf]) -> String`, `zc_model::Fit::from_text(&str) -> Fit`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to the existing `mod tests` in `crates/zc-cli/src/fit_cmd.rs`:
 
@@ -466,12 +484,12 @@ Append to the existing `mod tests` in `crates/zc-cli/src/fit_cmd.rs`:
     }
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cargo test -p zc-cli fit_cmd 2>&1 | tail -20`
 Expected: FAIL — `cannot find function 'sources_in'` and `read_text`.
 
-- [ ] **Step 3: Implement the source list**
+- [x] **Step 3: Implement the source list**
 
 In `crates/zc-cli/src/fit_cmd.rs`, add beside the existing constants:
 
@@ -528,12 +546,12 @@ pub fn read_text(paths: &[std::path::PathBuf]) -> String {
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `cargo test -p zc-cli fit_cmd 2>&1 | tail -20`
 Expected: 6 passed (3 existing plus 3 new).
 
-- [ ] **Step 5: Let `Fit` take text rather than a path**
+- [x] **Step 5: Let `Fit` take text rather than a path**
 
 In `crates/zc-model/src/fit.rs`, replace `load`:
 
@@ -549,7 +567,7 @@ In `crates/zc-model/src/fit.rs`, replace `load`:
     }
 ```
 
-- [ ] **Step 6: Point every reader at the source list**
+- [x] **Step 6: Point every reader at the source list**
 
 `crates/zc-cli/src/fit_cmd.rs` — `run` and `summary_text`:
 
@@ -597,7 +615,7 @@ fn describe_sources(paths: &[std::path::PathBuf]) -> String {
     let fit = zc_model::Fit::from_text(&fit_cmd::read_text(&fit_cmd::sources()));
 ```
 
-- [ ] **Step 7: Make `zc gate` report both tiers**
+- [x] **Step 7: Make `zc gate` report both tiers**
 
 In `crates/zc-cli/src/gate_cmd.rs`, replace the whole opening of `run` — from
 `let path = ...` down to and including the closing brace of the `let ... else`
@@ -647,7 +665,7 @@ and change `let fit = Fit::load(&path);` to:
     let fit = Fit::from_text(&crate::fit_cmd::read_text(&all));
 ```
 
-- [ ] **Step 8: Add the directory and its README**
+- [x] **Step 8: Add the directory and its README**
 
 ```bash
 mkdir -p data/calibration/community
@@ -672,7 +690,7 @@ Promotion from here into `gate.jsonl` is a deliberate `git mv` with a human's
 name on the commit. There is no tooling for it on purpose.
 ```
 
-- [ ] **Step 9: Prove the two tiers behave**
+- [x] **Step 9: Prove the two tiers behave**
 
 ```bash
 cargo build --release --bin zc
@@ -687,7 +705,7 @@ Expected: the `fit` header reads `..., plus 1 community record(s)`, and `gate`
 prints a `with 1 community record(s)` line. Both disappear when the file is
 removed.
 
-- [ ] **Step 10: Full check and commit**
+- [x] **Step 10: Full check and commit**
 
 ```bash
 ./check.sh
@@ -717,7 +735,7 @@ nothing in Rust depends on it.
 - Consumes: `data/calibration/gate.jsonl` and `data/calibration/community/*.jsonl` as they exist on disk.
 - Produces: exit code 0 (valid) or 1 (any failure), with one line per failure on stdout. `--self-test` runs the fixtures and touches no repository file.
 
-- [ ] **Step 1: Write the script, tests first inside it**
+- [x] **Step 1: Write the script, tests first inside it**
 
 Create `scripts/validate_calibration.py`:
 
@@ -940,20 +958,20 @@ if __name__ == "__main__":
     sys.exit(1 if problems else 0)
 ```
 
-- [ ] **Step 2: Run the self-test**
+- [x] **Step 2: Run the self-test**
 
 Run: `python3 scripts/validate_calibration.py --self-test`
 Expected: `self-test: ok`, exit 0. If any fixture reports the wrong verdict, fix
 the check it exercises — not the fixture.
 
-- [ ] **Step 3: Run it against the real dataset**
+- [x] **Step 3: Run it against the real dataset**
 
 Run: `python3 scripts/validate_calibration.py`
 Expected: `ok: 0 problem(s)`. If `gate.jsonl` reports problems, **do not edit the
 data to make them go away** — bring the finding back; a real record failing a
 plausibility bound is either a validator bug or a genuine discovery.
 
-- [ ] **Step 4: Prove it rejects a hand-edited record**
+- [x] **Step 4: Prove it rejects a hand-edited record**
 
 ```bash
 cp data/calibration/gate.jsonl /tmp/gate.bak
@@ -973,7 +991,7 @@ python3 scripts/validate_calibration.py; echo "exit: $?"
 Expected: `exit: 1` with an `error_pct=0.0 but its own numbers give ...` line,
 then `exit: 0` after the restore. Confirm `git diff --stat data/` is empty.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add scripts/validate_calibration.py
@@ -1003,7 +1021,7 @@ Implements spec §5.
 - Consumes: `scripts/validate_calibration.py` from Task 3.
 - Produces: nothing consumed by later tasks.
 
-- [ ] **Step 1: Write the pull-request workflow**
+- [x] **Step 1: Write the pull-request workflow**
 
 Create `.github/workflows/calibration-prs.yml`:
 
@@ -1038,7 +1056,7 @@ jobs:
       - run: python3 scripts/validate_calibration.py
 ```
 
-- [ ] **Step 2: Wire it into `ci.yml`**
+- [x] **Step 2: Wire it into `ci.yml`**
 
 In `.github/workflows/ci.yml`, in the `data` job, add before the `cargo build` step:
 
@@ -1047,7 +1065,7 @@ In `.github/workflows/ci.yml`, in the `data` job, add before the `cargo build` s
       - run: python3 scripts/validate_calibration.py
 ```
 
-- [ ] **Step 3: Wire it into `check.sh`**
+- [x] **Step 3: Wire it into `check.sh`**
 
 In `check.sh`, insert before the `echo "== installer =="` line:
 
@@ -1057,7 +1075,7 @@ python3 scripts/validate_calibration.py --self-test
 python3 scripts/validate_calibration.py
 ```
 
-- [ ] **Step 4: Verify both locally**
+- [x] **Step 4: Verify both locally**
 
 ```bash
 ./check.sh 2>&1 | grep -A3 "== calibration =="
@@ -1071,7 +1089,7 @@ for f in ['.github/workflows/calibration-prs.yml', '.github/workflows/ci.yml']:
 Expected: the calibration section prints `self-test: ok` and `ok: 0 problem(s)`,
 and `check.sh` still ends in `OK`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add .github/workflows/calibration-prs.yml .github/workflows/ci.yml check.sh
@@ -1099,7 +1117,7 @@ tier alone and a merged submission never reaches anyone's binary.
 - Consumes: `data/calibration/gate.jsonl`, `data/calibration/community/*.jsonl`.
 - Produces: generated `pub static EMBEDDED_CALIBRATION: &[&str]`, and `fit::EMBEDDED` becomes `fn embedded() -> String`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 In `crates/zc-model/src/fit.rs`, replace `the_binary_ships_a_non_empty_dataset`:
 
@@ -1123,12 +1141,12 @@ In `crates/zc-model/src/fit.rs`, replace `the_binary_ships_a_non_empty_dataset`:
     }
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 Run: `cargo test -p zc-model the_binary_ships 2>&1 | tail -10`
 Expected: FAIL — `cannot find function 'embedded'`.
 
-- [ ] **Step 3: Extend the build script**
+- [x] **Step 3: Extend the build script**
 
 In `crates/zc-model/build.rs`, add before the final `std::fs::write`:
 
@@ -1169,7 +1187,7 @@ In `crates/zc-model/build.rs`, add before the final `std::fs::write`:
     out.push_str(&cal);
 ```
 
-- [ ] **Step 4: Replace the hardcoded include in `fit.rs`**
+- [x] **Step 4: Replace the hardcoded include in `fit.rs`**
 
 In `crates/zc-model/src/fit.rs`, replace the `EMBEDDED` constant:
 
@@ -1213,12 +1231,12 @@ Replace its use in `from_text`:
 that module — hence `crate::catalog::EMBEDDED_CALIBRATION`, alongside the
 catalog's own `EMBEDDED`.
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [x] **Step 5: Run the tests to verify they pass**
 
 Run: `cargo test -p zc-model 2>&1 | tail -6`
 Expected: all pass.
 
-- [ ] **Step 6: Prove a community record reaches the binary**
+- [x] **Step 6: Prove a community record reaches the binary**
 
 ```bash
 head -1 data/calibration/gate.jsonl > data/calibration/community/aaaaaaaaaaaaaaaa-deadbeef.jsonl
@@ -1231,7 +1249,7 @@ Expected: the run count for one bucket rises by 1 while the file exists (the
 machine count does not — it is the same `hw`), and returns when it is removed.
 This is also a live check that the machines-not-runs confidence rule holds.
 
-- [ ] **Step 7: Full check and commit**
+- [x] **Step 7: Full check and commit**
 
 ```bash
 ./check.sh
@@ -1260,14 +1278,14 @@ already be true when the commit lands.
 - Consumes: everything from Tasks 1–5.
 - Produces: nothing.
 
-- [ ] **Step 1: Capture the real output**
+- [x] **Step 1: Capture the real output**
 
 ```bash
 ./target/release/zc share --print > /tmp/zc-share.txt
 cat /tmp/zc-share.txt
 ```
 
-- [ ] **Step 2: Add the loop to `README.md`**
+- [x] **Step 2: Add the loop to `README.md`**
 
 Under the existing "Adding a machine is the single most useful contribution
 right now" line, add a section pasted from `/tmp/zc-share.txt` — the record
@@ -1277,13 +1295,13 @@ the browser does; GitHub forks on commit; a validator checks the file and a
 human merges; merged records feed the coefficients immediately and the headline
 number only after a maintainer promotes them.
 
-- [ ] **Step 3: Add the same three steps to `CONTRIBUTING.md`**
+- [x] **Step 3: Add the same three steps to `CONTRIBUTING.md`**
 
 `ollama pull qwen3:1.7b` → `zc verify qwen3:1.7b` → `zc share`. Note that
 `scripts/validate_calibration.py` runs locally and is the same script CI runs,
 so a contributor can check their file before opening the PR.
 
-- [ ] **Step 4: Update the runbook**
+- [x] **Step 4: Update the runbook**
 
 In `docs/gate-runbook.md`, step 6 currently says to carry `local.jsonl` back by
 hand. Add `zc share` as the path for anyone who is not the maintainer, keeping
@@ -1291,7 +1309,7 @@ the manual `cat >> gate.jsonl` route for machines the maintainer runs
 themselves — those go straight into the curated tier and that is the whole
 distinction.
 
-- [ ] **Step 5: Fix the pointer in `zc verify`**
+- [x] **Step 5: Fix the pointer in `zc verify`**
 
 `crates/zc-cli/src/verify.rs:271` already says ``(local only; `zc share` to submit)``.
 Verify the command it names now exists and behaves as described:
@@ -1301,7 +1319,7 @@ Verify the command it names now exists and behaves as described:
 ./target/release/zc share --print | head -3
 ```
 
-- [ ] **Step 6: Verify every path named in the docs resolves**
+- [x] **Step 6: Verify every path named in the docs resolves**
 
 ```bash
 grep -oE '(docs|scripts|data)/[A-Za-z0-9_./-]+' README.md CONTRIBUTING.md docs/gate-runbook.md \
@@ -1309,7 +1327,7 @@ grep -oE '(docs|scripts|data)/[A-Za-z0-9_./-]+' README.md CONTRIBUTING.md docs/g
 ```
 Expected: no output.
 
-- [ ] **Step 7: Full check and commit**
+- [x] **Step 7: Full check and commit**
 
 ```bash
 ./check.sh
