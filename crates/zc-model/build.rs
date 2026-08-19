@@ -12,7 +12,7 @@ use std::path::PathBuf;
 
 fn main() {
     // Build scripts run with the package root as the working directory.
-    let dir = PathBuf::from("../../data/models");
+    let dir = PathBuf::from("data/models");
     println!("cargo:rerun-if-changed={}", dir.display());
 
     let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
@@ -42,7 +42,7 @@ fn main() {
     // repository, and a binary that cannot see the dataset predicts from priors
     // while the README quotes an accuracy figure computed from records it never
     // loaded.
-    let calib = PathBuf::from("../../data/calibration");
+    let calib = PathBuf::from("data/calibration");
     let community = calib.join("community");
     println!("cargo:rerun-if-changed={}", calib.display());
     println!("cargo:rerun-if-changed={}", community.display());

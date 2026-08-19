@@ -83,4 +83,4 @@ jobs:
           commit-message: "catalog: weekly refresh from scripts/ingest_hf.py"
           body-path: ingest.log
           delete-branch: true
-          add-paths: data/models/*.json
+          add-paths: crates/zc-model/data/models/*.json

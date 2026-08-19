@@ -10,7 +10,7 @@ name: calibration-prs
 on:
   pull_request:
     paths:
-      - "data/calibration/**"
+      - "crates/zc-model/data/calibration/**"
       - "scripts/validate_calibration.py"
 
 permissions:

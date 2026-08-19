@@ -3,6 +3,8 @@ name = "zc-bench"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+description = "Micro-benchmarks that measure RAM bandwidth, compute and uncached disk on the machine actually in front of you."
+repository.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
