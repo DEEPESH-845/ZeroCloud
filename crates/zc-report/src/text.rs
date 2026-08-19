@@ -198,11 +198,15 @@ pub fn render_with(r: &Report, color: bool) -> String {
             "  no calibration data yet - ranges are wide priors. Run `zc verify`.",
         );
     }
+    // Width follows the rows actually shown. Fixed at 28 this table ran to 93
+    // columns on any row that spills to disk -- which is the row a low-end
+    // machine shows, so it wrapped hardest on the hardware this tool is for.
+    let mw = crate::model_col_width(&r.models);
     push(
         p,
         &format!(
-            "  {:<4} {:<28} {:<7} {:>12} {:>7} {:>6}  {:<6}",
-            "", "model", "quant", "decode tok/s", "max ctx", "TTFT", "conf"
+            "  {:<4} {:<mw$} {:<7} {:>11} {:>5} {:>5} {:<6} {:>4}",
+            "", "model", "quant", "decode t/s", "ctx", "TTFT", "conf", "%RAM"
         ),
     );
 
@@ -241,7 +245,7 @@ pub fn render_with(r: &Report, color: bool) -> String {
         push(
             p,
             &format!(
-                "  {} {:<28} {:<7} {:>12} {:>7} {:>6}  {:<6}{}",
+                "  {} {:<mw$} {:<7} {:>11} {:>5} {:>5} {:<6} {:>4}",
                 mark,
                 row.model_id,
                 row.quant.name,
@@ -249,12 +253,16 @@ pub fn render_with(r: &Report, color: bool) -> String {
                 ctx,
                 ttft,
                 pr.confidence.label(),
-                // Appended without a separator so a fully-resident row ends at
-                // the last character it printed. Trailing spaces on every line
-                // break copy-paste out of a terminal and show up as whitespace
-                // diffs in any report a user pastes into an issue.
+                // A column rather than a sentence. "  89% resident" cost 14
+                // columns and pushed a spilling row to 93; "89%" under a %RAM
+                // header says the same thing in four and fits at any model
+                // width the catalog can produce.
+                //
+                // Blank rather than "100%" when everything is resident: the
+                // eye should land on the rows that spill, and `push` trims the
+                // trailing space so a full row still ends where it stops.
                 if pr.resident_fraction < 0.999 {
-                    format!("  {:.0}% resident", pr.resident_fraction * 100.0)
+                    format!("{:.0}%", pr.resident_fraction * 100.0)
                 } else {
                     String::new()
                 }
