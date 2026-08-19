@@ -132,6 +132,16 @@ real machine that is not this one.** If you have a Windows laptop, a Linux
 desktop, or an old Intel Mac, that is the single most valuable thing anyone can
 contribute right now, and it takes about twenty minutes.
 
+You do not have to take that on faith. The dataset is compiled into the binary,
+so after one `zc verify` on any bare-metal machine, your own `zc gate` prints:
+
+```
+  PASS  median 11.6% < 25% across 9 machines.
+```
+
+The gate closes on your machine first. `zc share` is how it closes for everyone
+else.
+
 **The second number is the one that was wrong, and it has been fixed.** The
 published range claims to be a 90% interval; `zc gate` measured 54.5%. The cause
 was an assumption, not a bug: the half-width came from `1.645 × MAD`, which
