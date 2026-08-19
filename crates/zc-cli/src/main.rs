@@ -2,6 +2,7 @@ mod check;
 mod doctor;
 mod fit_cmd;
 mod gate_cmd;
+mod hf;
 mod machine;
 mod share;
 mod verify;
@@ -14,11 +15,14 @@ EXAMPLES
     zc check --top 5      the five best fits, as plain text
     zc check --json       the same data, for a script or an agent
     zc verify qwen3:1.7b  run the model for real and compare
+    zc check Qwen/Qwen3-4B  will a model outside the catalog fit? (fetches)
     zc doctor             a paste-ready report for a bug
 
 USAGE
     zc [check] [--json] [--kv f16|q8|q4] [--top N] [--all] [--tui | --no-tui]
                           probe hardware and predict model performance
+    zc check <hf-repo-id> will one model that is not in the catalog fit?
+                          the only command that touches the network
     zc verify [MODEL] [--runtime NAME]
                           run a real model and compare against the prediction
     zc fit                fitted coefficients, and the evidence behind them
@@ -29,11 +33,15 @@ USAGE
     zc --help
 
 Both commands benchmark the hardware first: ~2s on a fast laptop, longer
-where the disk is slow. Nothing leaves this
-machine; `zc verify` writes only to data/calibration/local.jsonl.
+where the disk is slow. Nothing leaves this machine and no connection is
+opened, with one exception you have to ask for by name: `zc check
+<hf-repo-id>` reads that repo's public metadata from huggingface.co, and
+prints each URL before fetching it. `zc verify` writes only to
+crates/zc-model/data/calibration/local.jsonl.
 
 zc check
-    PRECONDITIONS  none. No network, no runtime, no model files required.
+    PRECONDITIONS  none. No runtime and no model files required, and no
+                   network unless you pass an <hf-repo-id>.
     SIDE EFFECTS   reads a large existing file on the model volume to measure
                    uncached disk. Creates a scratch file only if none is found.
                    Runs nvidia-smi / lspci / powershell read-only to find GPUs,
@@ -245,7 +253,15 @@ fn main() {
         eprintln!("--tui needs an interactive terminal on both stdin and stdout");
         std::process::exit(2);
     }
-    let tui = cmd == "check" && interactive;
+    // A repository id after `check` asks about a model the catalog does not
+    // have. It is the one path that opens an outbound connection, so it never
+    // opens the TUI -- the fetch and its two URLs must be visible.
+    let hf_repo = args
+        .get(1)
+        .filter(|_| cmd == "check")
+        .filter(|a| hf::looks_like_repo_id(a))
+        .cloned();
+    let tui = cmd == "check" && interactive && hf_repo.is_none();
 
     // Both subcommands need the same measured facts, and measuring twice could
     // give two different answers if thermal state shifted between them.
@@ -256,6 +272,14 @@ fn main() {
     let code = match runtime {
         Some(rt) => verify::run(&m, rt.as_ref(), &fit, kv, args.get(1).map(String::as_str)),
         None if cmd == "doctor" => doctor::run(&m, &fit, kv),
+        None if hf_repo.is_some() => {
+            if as_json {
+                eprintln!("`zc check <hf-repo-id>` has no --json output yet -- it reports memory");
+                eprintln!("only, and the shape is not settled. Drop --json, or use a catalog id.");
+                std::process::exit(2);
+            }
+            check::run_hf(&m, kv, &hf_repo.unwrap())
+        }
         None => check::run(&m, &fit, kv, top, show_all, as_json, tui),
     };
     std::process::exit(code);
