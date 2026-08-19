@@ -27,6 +27,12 @@ for t in "${TARGETS[@]}"; do
   fi
 done
 
+echo "== calibration =="
+# The same script CI runs on every pull request touching data/calibration.
+# Self-test first: a validator whose own fixtures fail would fail open.
+python3 scripts/validate_calibration.py --self-test
+python3 scripts/validate_calibration.py
+
 echo "== installer =="
 sh -n install.sh
 # Offline: ZC_VERSION skips the network tag lookup, so this exercises target
