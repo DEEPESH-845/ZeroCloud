@@ -3,8 +3,11 @@
 **What can this laptop actually run, and how fast?**
 
 `zc` measures your machine in about two seconds and predicts decode speed,
-time to first token, and maximum usable context for local LLMs. No account, no upload,
-no network call at all.
+time to first token, and maximum usable context for local LLMs. No account and
+no upload. It opens no connection at all unless you ask it to by name: `zc
+check <hf-repo-id>` reads that repository's public metadata from
+huggingface.co, and prints every URL before fetching it. Nothing about your
+machine is sent, then or ever.
 
 That two seconds is measured, not estimated: 1.85s across three runs on the
 Apple Silicon laptop the sample output below came from. Only the disk probe is
@@ -93,6 +96,46 @@ agents are unaffected. `--tui` forces it on where the terminal is not detected,
 `--no-tui` forces it off, and `ZC_ASCII=1` swaps the box-drawing glyphs for
 ASCII.
 
+## A model that is not in the catalog
+
+The catalog covers 26 models. For anything else, hand `zc` the Hugging Face
+repository id:
+
+```
+$ zc check Qwen/Qwen3-32B
+
+  fetching https://huggingface.co/api/models/Qwen/Qwen3-32B
+  fetching https://huggingface.co/Qwen/Qwen3-32B/raw/main/config.json
+
+== Qwen/Qwen3-32B ==  (published weights, not a quantisation)
+
+  geometry     64L  n_embd 5120  vocab 151936  GQA 8x128
+  parameters   32.76B  from the repo's safetensors metadata
+  weights      61.02 GiB  as published in BF16
+  budget       12.80 GiB  measured on this machine, idle
+  KV           0.25 MiB/token at F16
+
+  WON'T FIT    the published weights alone are 48.48 GiB over budget
+               a quantisation may still fit -- Q4_K_M is roughly a
+               quarter of the size of BF16 weights
+
+  decode       -   speed needs the byte count of the quantised file you
+                   would actually load, which lives in a separate GGUF
+                   repo. Memory above is arithmetic over numbers the
+                   repo states; a speed here would not be. Run
+                   `zc verify` once you have pulled it to measure both.
+```
+
+The dash is the point. Weight size is arithmetic over the parameter count the
+repository publishes *per dtype*, so it is checkable. A decode speed would
+need the size of the quantised file you would actually load, which lives in a
+different repo — and inventing it from `params x bits-per-weight` is exactly
+the kind of number this tool exists to not print.
+
+This is the only command that opens a connection. It prints each URL first,
+sends nothing about your machine, and holds no token — so a gated repo like
+Llama or Gemma answers 401 until you accept its licence on huggingface.co.
+
 ## Install
 
 ```sh
@@ -139,7 +182,7 @@ max_ctx  = (usable − weights − compute_buffers) / kv_bytes_per_token
 ```
 
 `η` is the one term that cannot be derived. It comes from real measured runs —
-which is what `zc verify` collects and what `data/calibration/gate.jsonl` holds.
+which is what `zc verify` collects and what `crates/zc-model/data/calibration/gate.jsonl` holds.
 
 ## Every number is checkable
 
@@ -239,7 +282,7 @@ before opening it:
 
   not in it: hostname, username, serial number, MAC, IP, file paths
 
-  lands at      data/calibration/community/8bc574063a10f63c-921a62a1.jsonl
+  lands at      crates/zc-model/data/calibration/community/8bc574063a10f63c-921a62a1.jsonl
   open in browser? [y/N]
 ```
 
@@ -249,7 +292,7 @@ file, and a human merges it. There is no account to make and no token anywhere.
 
 Merged records feed `zc fit` immediately, so your machine improves everyone's
 predictions. They do not move the headline accuracy number above, which is
-computed from `data/calibration/gate.jsonl` — the tier whose provenance is
+computed from `crates/zc-model/data/calibration/gate.jsonl` — the tier whose provenance is
 known. `zc gate` prints both figures, always.
 
 ## Privacy
@@ -274,7 +317,7 @@ The highest-value contributions need no Rust:
 
 - **Add your machine.** `zc verify` then `zc share`. Old, slow and unusual
   hardware is worth more than another fast laptop.
-- **Add a model.** One JSON file in `data/models/`. Nothing else to touch.
+- **Add a model.** One JSON file in `crates/zc-model/data/models/`. Nothing else to touch.
 - **Report a bad prediction.** `zc verify` prints predicted vs actual; paste it
   with `zc doctor` output. A prediction that was wrong is data, not a
   complaint.

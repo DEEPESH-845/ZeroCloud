@@ -3,7 +3,7 @@
 
 The catalog is the width of the product: six models today, and a machine that
 can run a model we have never heard of is told nothing. This turns a list of
-repos into `data/models/*.json`.
+repos into `crates/zc-model/data/models/*.json`.
 
 The gate is the whole point. Every field is *derived from a reading* or the
 entry is rejected with a logged reason:
@@ -27,7 +27,7 @@ plain python image with no install step.
 Usage:
     ingest_hf.py --self-test           check the derivation against known models
     ingest_hf.py --dry-run             fetch and report, write nothing
-    ingest_hf.py                       write data/models/*.json
+    ingest_hf.py                       write crates/zc-model/data/models/*.json
     ingest_hf.py --manifest FILE       use a different repo list
 """
 
@@ -408,7 +408,7 @@ def self_test():
     """Derivation checks against models whose geometry is hand-verified.
 
     These configs are the real published ones, trimmed to the keys that matter.
-    Each expected value is cross-checked against `data/models/*.json`, which
+    Each expected value is cross-checked against `crates/zc-model/data/models/*.json`, which
     `cargo test -p zc-model` in turn checks against hand-computed KV bytes — so
     a break here means the ingest disagrees with arithmetic done by hand.
     """

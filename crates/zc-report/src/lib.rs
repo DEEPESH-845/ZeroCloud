@@ -229,12 +229,21 @@ impl SortKey {
 
 /// `rank`, but selectable. `Verdict` returns exactly what `rank` does, so the
 /// TUI's default order is byte-identical to the static table's.
+///
+/// The other two sort by what was asked for, but still sink `WontFit` to the
+/// bottom. That is not a hedge: `WontFit` means no context fits alongside the
+/// weights, *not* that the weights are too big, so such a row can carry a
+/// perfectly good computed decode speed while printing `-`. Sorting purely on
+/// that number floats models you cannot run above ones you can — and it only
+/// happens on a machine where RAM is tight, which is the machine this tool
+/// exists for and not the one it gets developed on.
 pub fn rank_by(row: &Row, sort: SortKey) -> (u8, i64, i64) {
     let (v, d, c) = rank(row);
+    let unrunnable = u8::from(row.prediction.verdict == Verdict::WontFit);
     match sort {
         SortKey::Verdict => (v, d, c),
-        SortKey::Decode => (0, d, c),
-        SortKey::Context => (0, c, d),
+        SortKey::Decode => (unrunnable, d, c),
+        SortKey::Context => (unrunnable, c, d),
     }
 }
 
@@ -400,5 +409,90 @@ mod wrap_tests {
         for l in wrap("   spaced   out   ", 80, 2) {
             assert_eq!(l.trim_end(), l);
         }
+    }
+}
+
+#[cfg(test)]
+mod sort_tests {
+    use super::*;
+    use zc_model::spec::QuantFamily;
+    use zc_model::{Confidence, Prediction, Quant};
+
+    fn pred(decode: f64, ctx: u32, verdict: Verdict) -> Prediction {
+        Prediction {
+            resident_fraction: 1.0,
+            decode_tok_s: (decode, decode * 1.5),
+            prefill_tok_s: None,
+            ttft_s: None,
+            prefill_confidence: Confidence::Low,
+            max_context: ctx,
+            kv_bytes_per_token: 1024,
+            verdict,
+            raw_seconds_per_token: 0.01,
+            assumed_eta: 0.8,
+            confidence: Confidence::Low,
+        }
+    }
+
+    /// `WontFit` means no context fits alongside the weights, not that the
+    /// weights are too big — so it can carry a high decode speed while the
+    /// table prints a dash. Sorting on that number alone put a model the user
+    /// cannot run above one they can.
+    #[test]
+    fn an_unrunnable_model_never_outranks_a_runnable_one() {
+        let quant = Quant {
+            name: "Q4_K_M".into(),
+            bytes: 1 << 30,
+            family: QuantFamily::KQuant,
+        };
+        let fast_but_unrunnable = Row {
+            model_id: "no-context-left",
+            quant: &quant,
+            prediction: pred(200.0, 0, Verdict::WontFit),
+        };
+        let slow_but_runnable = Row {
+            model_id: "actually-works",
+            quant: &quant,
+            prediction: pred(4.0, 32768, Verdict::Usable),
+        };
+        for sort in [SortKey::Verdict, SortKey::Decode, SortKey::Context] {
+            assert!(
+                rank_by(&slow_but_runnable, sort) < rank_by(&fast_but_unrunnable, sort),
+                "{sort:?} ranked an unrunnable model first"
+            );
+        }
+    }
+
+    /// Among models that do run, the requested sort still decides.
+    #[test]
+    fn the_requested_sort_still_orders_runnable_models() {
+        let quant = Quant {
+            name: "Q4_K_M".into(),
+            bytes: 1 << 30,
+            family: QuantFamily::KQuant,
+        };
+        // Worse verdict, but faster and with more context.
+        let fast = Row {
+            model_id: "fast",
+            quant: &quant,
+            prediction: pred(50.0, 65536, Verdict::Slow),
+        };
+        let slow = Row {
+            model_id: "slow",
+            quant: &quant,
+            prediction: pred(5.0, 2048, Verdict::Good),
+        };
+        assert!(
+            rank_by(&slow, SortKey::Verdict) < rank_by(&fast, SortKey::Verdict),
+            "verdict sort leads with the verdict"
+        );
+        assert!(
+            rank_by(&fast, SortKey::Decode) < rank_by(&slow, SortKey::Decode),
+            "speed sort leads with speed"
+        );
+        assert!(
+            rank_by(&fast, SortKey::Context) < rank_by(&slow, SortKey::Context),
+            "context sort leads with context"
+        );
     }
 }

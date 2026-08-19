@@ -17,7 +17,7 @@ zc share
 
 `zc verify` prints predicted vs actual and appends one JSON line to
 your calibration file, on your disk and nowhere else — inside a checkout that
-is `data/calibration/local.jsonl`, and outside one it is your platform's data
+is `crates/zc-model/data/calibration/local.jsonl`, and outside one it is your platform's data
 directory (`~/Library/Application Support/zerocloud` on macOS,
 `~/.local/share/zerocloud` on Linux, `%LOCALAPPDATA%\zerocloud` on Windows).
 Every command that touches it prints the full path. `zc share` then
@@ -27,7 +27,7 @@ browser. `zc` opens no connection itself; your browser does, and you watch it.
 `zc share --print` gives you the URL without the prompt.
 
 Committing through GitHub's editor forks the repository to your account and
-offers the pull request button. The file lands in `data/calibration/community/`
+offers the pull request button. The file lands in `crates/zc-model/data/calibration/community/`
 under a name derived from its own contents, so resubmitting the same run is an
 empty diff rather than a second PR.
 
@@ -49,18 +49,18 @@ a record that disagrees with itself fails here rather than in review.
 
 Merged records feed `zc fit` straight away, which is what makes your machine
 improve everyone's predictions. They do not move the headline accuracy figure —
-that is computed from `data/calibration/gate.jsonl`, the tier whose provenance
+that is computed from `crates/zc-model/data/calibration/gate.jsonl`, the tier whose provenance
 is known, and promotion into it is a maintainer's deliberate `git mv`. `zc
 gate` prints both numbers.
 
 **A record whose prediction was badly wrong is the most useful record there
 is.** It will not be rejected for making the number worse. The only records
 ever retired are ones whose provenance is invalid, and each retirement is
-written down in `data/calibration/archive/README.md` with its reason.
+written down in `crates/zc-model/data/calibration/archive/README.md` with its reason.
 
 ## Add or correct a model
 
-One JSON file in `data/models/`, one PR, no Rust. Copy the nearest existing
+One JSON file in `crates/zc-model/data/models/`, one PR, no Rust. Copy the nearest existing
 file and change the numbers; `crates/zc-model/build.rs` picks it up
 automatically.
 

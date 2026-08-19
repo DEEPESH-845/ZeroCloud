@@ -17,7 +17,7 @@ three records into a `calibration-merged` artifact — it just never commits the
 gh workflow run calibrate.yml
 gh run watch
 gh run download -n calibration-merged -D /tmp/ci-records
-cat /tmp/ci-records/all.jsonl >> data/calibration/gate.jsonl
+cat /tmp/ci-records/all.jsonl >> crates/zc-model/data/calibration/gate.jsonl
 ```
 
 Those runners are VMs. They count as machines and they can **never** satisfy
@@ -90,14 +90,14 @@ not five of the same laptop:
 
    Repeat per model. Each run appends one line to `local.jsonl` in your data
    directory and prints the full path. Inside a checkout that is
-   `data/calibration/local.jsonl`; outside one it is the platform's per-user
+   `crates/zc-model/data/calibration/local.jsonl`; outside one it is the platform's per-user
    data directory, so it does not matter which directory you run from.
 
 6. **Carry back** that `local.jsonl` and the doctor bundle.
 
    That is the maintainer's route, and it is the one that puts a record in the
    curated tier. Anyone else runs `zc share` instead: it opens a prefilled
-   GitHub editor and the record lands in `data/calibration/community/`, where it
+   GitHub editor and the record lands in `crates/zc-model/data/calibration/community/`, where it
    moves every coefficient but not the published accuracy figure. The
    distinction is provenance, not quality — promoting a community record into
    `gate.jsonl` is a `git mv` a maintainer makes deliberately.
@@ -107,7 +107,7 @@ not five of the same laptop:
 Append each machine's lines to the committed dataset and drop the doctor bundle
 in place:
 
-    cat /path/from/machine/local.jsonl >> data/calibration/gate.jsonl
+    cat /path/from/machine/local.jsonl >> crates/zc-model/data/calibration/gate.jsonl
     cp /path/from/machine/doctor-<label>.md docs/doctor-bundles/
 
 Per-machine provenance is already carried by the `hw` fingerprint, which is what

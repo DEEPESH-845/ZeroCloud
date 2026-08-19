@@ -19,7 +19,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-CALIB = ROOT / "data" / "calibration"
+CALIB = ROOT / "crates" / "zc-model" / "data" / "calibration"
 NAME_RE = re.compile(r"^[0-9a-f]{16}-[0-9a-f]{8}\.jsonl$")
 MAX_BYTES = 4096
 VIRT = {"none", "hypervisor", "wsl2", "container"}

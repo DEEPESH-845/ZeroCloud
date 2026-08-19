@@ -3,3 +3,5 @@ name = "zc-model"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+description = "Analytic prediction of local LLM decode speed, time-to-first-token and maximum context from measured hardware."
+repository.workspace = true

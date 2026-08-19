@@ -16,7 +16,7 @@ const BRANCH: &str = "main";
 /// Submissions land in their own tier. Which tier backs the published accuracy
 /// number is a maintainer's decision made in a visible commit, never a side
 /// effect of somebody running a command.
-const DIR: &str = "data/calibration/community";
+const DIR: &str = "crates/zc-model/data/calibration/community";
 
 /// GitHub answers 414 past its query limit. An encoded record is around 900
 /// bytes, so this is head-room rather than a tuning knob — and exceeding it

@@ -605,13 +605,30 @@ Everything below was executed, not reasoned about.
 | No surface prints `$HOME` | `check.sh` guard, run from a temp dir, **verified against a deliberately reintroduced leak** |
 | No line exceeds 80 columns | `check.sh` guard over check, `--all`, fit, gate, `--help`, also verified against a failing input |
 | Binary cost of crossterm | 883072 → 986512 bytes, +11.7% |
+| Every advertised key does something | Driven on a pty: arrows, `j`/`k`, `g`/`G`, home/end, pgup/pgdn, `s`, `a`, `/`, `?`, `q`, ctrl-c |
+
+## Bugs the pty driver found that 201 unit tests did not
+
+None of these were visible to `cargo test`, clippy or CI, because nothing
+automated had ever pressed a key.
+
+| Bug | Why the unit tests missed it |
+|---|---|
+| `a` (every quantisation) was inert | The state machine toggled correctly; `check.rs` had already collapsed the data before the TUI saw it. Both halves were right on their own |
+| `esc` quit instead of clearing a committed filter | The tested path was esc *while editing*. Committing with enter leaves the filter active and not editing, which no test covered |
+| The footer denominator was always the collapsed total | It read a field that is correct for the static table and cannot be correct for both TUI views |
+| Sorting by speed or context floated unrunnable models to the top | `WontFit` means no context fits, not that the weights do not — so such a row carries a real decode speed while printing `-`. There are none on a 16 GiB machine, so it could not appear here at all |
+
+The last one is the one worth remembering: it is invisible on the development
+machine by construction, and appears only on the constrained hardware this
+product is for.
 
 ## NOT verified
 
 | Item | Status |
 |---|---|
-| The TUI on Windows | Never executed. crossterm owns that layer, which is the reason it is a dependency rather than hand-written, but nobody has run it |
-| The TUI on Linux | Never executed. Cross-compiles clean |
+| The interactive TUI on Windows | Never executed. crossterm owns raw mode, key events and resize there, which is the reason it is a dependency rather than hand-written, but nobody has pressed a key. `tui_smoke.py` needs a pty and skips on Windows. **What CI does now run on `windows-latest`:** all 210 unit tests, including every `zc-tui` state and frame test, plus `scripts/contract_smoke.py` — 22 assertions covering the non-terminal promises. A Windows ConPTY driver was deliberately not written: it would be a second unvalidated cross-platform path added blind, which is how the bug in row 15 of this document survived for days |
+| The TUI on Linux | Now driven by `scripts/tui_smoke.py` in CI on `ubuntu-latest`. Not yet seen by a human on real Linux hardware |
 | Legacy `conhost` charset detection | Falls back to ASCII by design (no `TERM`, no `WT_SESSION`), unverified on real hardware |
 | Behaviour on a terminal narrower than 40 columns in the TUI | Message is printed; not seen on real hardware |
 
