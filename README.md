@@ -96,6 +96,41 @@ agents are unaffected. `--tui` forces it on where the terminal is not detected,
 `--no-tui` forces it off, and `ZC_ASCII=1` swaps the box-drawing glyphs for
 ASCII.
 
+## What would it take to run it?
+
+`zc check` starts from your machine. `zc plan` starts from the model and tells
+you what running it would need:
+
+```
+$ zc plan qwen3-8b --context 32K
+
+== plan ==  qwen3-8b at 32K context, KV F16, target 10 tok/s
+
+  this machine   12.80 GiB budget, 131 GB/s measured, Metal
+
+  quant     weights      KV    total         needs   on this machine
+  Q4_K_M       4.68    4.50     9.40       57 GB/s   fits, 17-28 t/s
+  Q5_K_M       5.45    4.50    10.17       67 GB/s   fits, 15-24 t/s
+  Q6_K         6.26    4.50    10.98       77 GB/s   fits, 13-21 t/s
+  Q8_0         8.11    4.50    12.83       92 GB/s   over by 0.03 GiB
+
+  GiB is memory, however it is provided -- RAM, VRAM or unified.
+  'needs' is the bandwidth for 10 tok/s at eta 0.875, low confidence.
+  Bandwidth is checkable against a spec sheet. A GPU model name
+  would be a lookup, and this tool puts no lookup under a number.
+```
+
+The bandwidth figure is the interesting one. Decode is memory-bound — every
+token reads the active weights once — so `decode = η × bandwidth / active
+bytes`, and solving that for bandwidth says what the hardware must do. Other
+tools answer this question with a GPU model name. A name is a lookup;
+GB/s is a number you can check against any spec sheet, and it is the unit that
+actually governs the answer.
+
+`--target-tps` moves the requirement (40 tok/s on the row above wants 230 GB/s,
+four times as much), `--kv q4` shrinks the KV column without touching the
+bandwidth, and `--quant` narrows it to one row.
+
 ## A model that is not in the catalog
 
 The catalog covers 26 models. For anything else, hand `zc` the Hugging Face

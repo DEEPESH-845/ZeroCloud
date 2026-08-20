@@ -4,6 +4,7 @@ mod fit_cmd;
 mod gate_cmd;
 mod hf;
 mod machine;
+mod plan_cmd;
 mod share;
 mod verify;
 
@@ -16,6 +17,8 @@ EXAMPLES
     zc check --json       the same data, for a script or an agent
     zc verify qwen3:1.7b  run the model for real and compare
     zc check Qwen/Qwen3-4B  will a model outside the catalog fit? (fetches)
+    zc plan qwen3-8b --context 32K
+                          what would it take to run this well?
     zc doctor             a paste-ready report for a bug
 
 USAGE
@@ -23,6 +26,8 @@ USAGE
                           probe hardware and predict model performance
     zc check <hf-repo-id> will one model that is not in the catalog fit?
                           the only command that touches the network
+    zc plan MODEL [--context N] [--quant Q] [--kv f16|q8|q4] [--target-tps T]
+                          how much memory and bandwidth would this model need?
     zc verify [MODEL] [--runtime NAME]
                           run a real model and compare against the prediction
     zc fit                fitted coefficients, and the evidence behind them
@@ -86,6 +91,25 @@ zc check
                    verdict is one of good|usable|slow|wont_fit.
                    ttft_s and prefill_tok_s are null until `zc verify` has
                    measured this backend - they are never derived.
+
+zc plan MODEL [--context N] [--quant Q] [--kv f16|q8|q4] [--target-tps T]
+    PRECONDITIONS  none. No network, no runtime, no model files required.
+    SIDE EFFECTS   same as `zc check` -- it benchmarks this machine in order to
+                   say how far short of the requirement it falls.
+    EXIT CODES     0 planned, 1 no such model or quantisation, 2 bad argument
+                   or a context past what the model was trained for.
+    AGENT USAGE    The inverse of `zc check`: starts from a model and reports
+                   what running it would take, rather than starting from the
+                   machine. One row per quantisation, or one with --quant.
+                   MODEL is an exact catalog id or an unambiguous substring;
+                   an ambiguous one is refused rather than guessed.
+                   --context accepts 4096 or 32K, and defaults to 4096, which
+                   is Ollama's default. --target-tps defaults to 10, the rate
+                   `zc check` treats as the floor of comfortable.
+                   'needs' is memory bandwidth in GB/s, derived by inverting
+                   decode = eta x bandwidth / active_bytes. It is deliberately
+                   not a GPU model name: a name is a lookup, and a bandwidth
+                   is checkable against a spec sheet.
 
 zc doctor
     PRECONDITIONS  none. Same probe and benchmark as `zc check`.
@@ -166,6 +190,9 @@ fn main() {
     // are stripped here with the other globals and never reach the probe.
     let record = take_value(&mut args, "--record");
     let print_only = take_flag(&mut args, "--print");
+    let context = take_value(&mut args, "--context");
+    let quant = take_value(&mut args, "--quant");
+    let target_tps = take_value(&mut args, "--target-tps");
     let force_tui = take_flag(&mut args, "--tui");
     let no_tui = take_flag(&mut args, "--no-tui");
     let cmd = args.first().map(String::as_str).unwrap_or("check");
@@ -197,6 +224,9 @@ fn main() {
         ("--all", show_all),
         ("--record", record.is_some()),
         ("--print", print_only),
+        ("--context", context.is_some()),
+        ("--quant", quant.is_some()),
+        ("--target-tps", target_tps.is_some()),
         ("--tui", force_tui),
         ("--no-tui", no_tui),
     ];
@@ -217,7 +247,7 @@ fn main() {
     if cmd == "share" {
         std::process::exit(share::run(record.as_deref(), print_only));
     }
-    if !matches!(cmd, "check" | "verify" | "doctor") {
+    if !matches!(cmd, "check" | "verify" | "doctor" | "plan") {
         match did_you_mean(cmd) {
             Some(c) => eprintln!("unknown command '{cmd}' -- did you mean `zc {c}`?"),
             None => eprintln!("unknown command '{cmd}' -- run `zc --help`"),
@@ -263,6 +293,39 @@ fn main() {
         .cloned();
     let tui = cmd == "check" && interactive && hf_repo.is_none();
 
+    // `zc plan` needs a model, and its own flags parsed before the benchmark
+    // runs -- a typo should not cost the user two seconds of probing first.
+    let plan_args = if cmd == "plan" {
+        let Some(model) = args.get(1).cloned() else {
+            eprintln!("`zc plan` needs a model: `zc plan qwen3-8b --context 32K`");
+            std::process::exit(2);
+        };
+        let ctx = match context.as_deref().map(plan_cmd::parse_ctx) {
+            Some(None) => {
+                eprintln!(
+                    "--context wants a token count like 4096 or 32K, got '{}'",
+                    context.unwrap_or_default()
+                );
+                std::process::exit(2);
+            }
+            other => other.flatten(),
+        };
+        let tps = match target_tps.as_deref().map(str::parse::<f64>) {
+            Some(Ok(v)) if v > 0.0 && v.is_finite() => Some(v),
+            None => None,
+            _ => {
+                eprintln!(
+                    "--target-tps wants a positive number, got '{}'",
+                    target_tps.unwrap_or_default()
+                );
+                std::process::exit(2);
+            }
+        };
+        Some((model, ctx, tps))
+    } else {
+        None
+    };
+
     // Both subcommands need the same measured facts, and measuring twice could
     // give two different answers if thermal state shifted between them.
     let m = machine::probe();
@@ -272,6 +335,10 @@ fn main() {
     let code = match runtime {
         Some(rt) => verify::run(&m, rt.as_ref(), &fit, kv, args.get(1).map(String::as_str)),
         None if cmd == "doctor" => doctor::run(&m, &fit, kv),
+        None if cmd == "plan" => {
+            let (model, ctx, tps) = plan_args.expect("plan args parsed above");
+            plan_cmd::run(&m, &fit, kv, &model, ctx, quant.as_deref(), tps)
+        }
         None if hf_repo.is_some() => {
             if as_json {
                 eprintln!("`zc check <hf-repo-id>` has no --json output yet -- it reports memory");
@@ -291,7 +358,7 @@ fn main() {
 /// would be absurd. The distance cap is the point: suggesting `share` for
 /// `xyzzy` is worse than saying nothing at all.
 fn did_you_mean(input: &str) -> Option<&'static str> {
-    const CMDS: &[&str] = &["check", "verify", "fit", "gate", "share", "doctor"];
+    const CMDS: &[&str] = &["check", "verify", "fit", "gate", "share", "doctor", "plan"];
     CMDS.iter()
         .map(|c| (*c, distance(input, c)))
         .filter(|(c, d)| *d <= 2 && *d < c.len())
@@ -327,6 +394,7 @@ fn accepts(cmd: &str, flag: &str) -> bool {
         "verify" => &["--runtime", "--kv"],
         "doctor" => &["--kv"],
         "share" => &["--record", "--print"],
+        "plan" => &["--context", "--quant", "--kv", "--target-tps"],
         // `fit` and `gate` read the calibration file and report it. Neither
         // predicts anything, so no prediction flag applies.
         _ => &[],

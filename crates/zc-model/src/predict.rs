@@ -610,6 +610,70 @@ mod tests {
         Quant { name: name.into(), bytes, family }
     }
 
+    /// The inversion must agree with the model it inverts.
+    ///
+    /// This is the whole safety of `zc plan`: predict a decode rate at a known
+    /// bandwidth, feed that rate back through `required_bandwidth_gbs`, and
+    /// the bandwidth must come back. A plausible-looking inversion that
+    /// disagreed with `predict` would be a confidently wrong number recommending
+    /// hardware, which is the worst thing this project could print.
+    #[test]
+    fn required_bandwidth_round_trips_through_predict() {
+        let spec = llama3_70b();
+        // Small enough to be fully resident in the 12 GiB budget, so bandwidth
+        // is the only term -- the regime the inversion is exact in.
+        let quant = q("Q4_K_M", 6 << 30, crate::spec::QuantFamily::KQuant);
+        for bw in [30.0f64, 60.0, 132.0, 400.0, 1000.0] {
+            let mut hw = hw_16gb();
+            hw.ram_bw_gbs = bw;
+            let p = predict(&spec, &quant, &hw, KvPrecision::F16, 2048, 512);
+            assert!(
+                (p.resident_fraction - 1.0).abs() < 1e-9,
+                "fixture must be fully resident, got {}",
+                p.resident_fraction
+            );
+            // Midpoint of the published range is eta / seconds_per_token.
+            let tps = p.assumed_eta / p.raw_seconds_per_token;
+            let back = required_bandwidth_gbs(&spec, &quant, tps, p.assumed_eta);
+            assert!(
+                (back - bw).abs() / bw < 1e-6,
+                "asked for {tps:.3} t/s, inversion said {back:.3} GB/s, machine had {bw}"
+            );
+        }
+    }
+
+    /// Doubling the target doubles the bandwidth, and a bigger active set costs
+    /// proportionally more. Both follow from decode being memory-bound.
+    #[test]
+    fn required_bandwidth_scales_with_target_and_active_bytes() {
+        let spec = llama3_70b();
+        let small = q("Q4_K_M", 4 << 30, crate::spec::QuantFamily::KQuant);
+        let big = q("Q8_0", 8 << 30, crate::spec::QuantFamily::Legacy);
+        let a = required_bandwidth_gbs(&spec, &small, 10.0, 0.8);
+        assert!((required_bandwidth_gbs(&spec, &small, 20.0, 0.8) - 2.0 * a).abs() < 1e-9);
+        assert!((required_bandwidth_gbs(&spec, &big, 10.0, 0.8) - 2.0 * a).abs() < 1e-9);
+        // A nonsense target is zero, not a division by zero.
+        assert_eq!(required_bandwidth_gbs(&spec, &small, 0.0, 0.8), 0.0);
+        assert_eq!(required_bandwidth_gbs(&spec, &small, 10.0, 0.0), 0.0);
+    }
+
+    /// The memory a plan reports must be the memory a prediction charges, or
+    /// the two surfaces disagree about the same model.
+    #[test]
+    fn requirement_uses_the_same_terms_as_prediction() {
+        let spec = llama3_70b();
+        let quant = q("Q4_K_M", 6 << 30, crate::spec::QuantFamily::KQuant);
+        let r = requirement(&spec, &quant, 32768, KvPrecision::F16, 512);
+        assert_eq!(r.weights, 6 << 30);
+        assert_eq!(r.kv, spec.kv_bytes(32768, KvPrecision::F16));
+        assert_eq!(r.compute, spec.compute_buffer_bytes(512));
+        assert_eq!(r.total, r.weights + r.kv + r.compute);
+        // Halving KV precision halves the KV term and nothing else.
+        let q4 = requirement(&spec, &quant, 32768, KvPrecision::Q4, 512);
+        assert_eq!(q4.weights, r.weights);
+        assert!(q4.kv < r.kv, "q4 KV must be smaller than f16");
+    }
+
     /// A model larger than RAM must still run. It streams from disk, slowly.
     /// Reporting WontFit contradicts the streaming model this whole engine is
     /// built around, and used to happen for every large model.
@@ -861,4 +925,67 @@ mod tests {
         let q4 = m.max_context(12 << 30, weights, KvPrecision::Q4, 512);
         assert!(q4 as f64 / large as f64 > 3.0, "q4 {q4} vs f16 {large}");
     }
+}
+
+/// What a model needs to run at a given context, however that memory is
+/// provided — host RAM, VRAM, or unified.
+///
+/// The inverse of the question `zc check` answers. `check` asks what this
+/// machine can run; this asks what running a given thing would take.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Requirement {
+    pub weights: u64,
+    pub kv: u64,
+    pub compute: u64,
+    pub total: u64,
+}
+
+/// Memory needed for `spec` at `quant` and `ctx` tokens.
+///
+/// Every term comes from the same functions `predict` uses, so a plan and a
+/// prediction cannot disagree about how much memory a model wants.
+pub fn requirement(
+    spec: &ModelSpec,
+    quant: &Quant,
+    ctx: u32,
+    kv_prec: KvPrecision,
+    ubatch: u32,
+) -> Requirement {
+    let weights = quant.bytes;
+    let kv = spec.kv_bytes(ctx, kv_prec);
+    let compute = spec.compute_buffer_bytes(ubatch);
+    Requirement {
+        weights,
+        kv,
+        compute,
+        total: weights.saturating_add(kv).saturating_add(compute),
+    }
+}
+
+/// Memory bandwidth needed to decode at `target_tps`, in GB/s.
+///
+/// Decode is memory-bound: every token reads the active weight set once, so
+/// `decode = eta * bandwidth / active_bytes` and this is that solved for
+/// bandwidth. Exact whenever the weights are resident, which is the regime a
+/// plan is about — if they are not resident the binding constraint is memory,
+/// not bandwidth, and [`requirement`] is the number that matters.
+///
+/// Stated in GB/s rather than as a GPU model name on purpose. A name is a
+/// lookup, and a lookup is the thing this project refuses to put underneath a
+/// number; bandwidth is the unit that actually governs decode and it is
+/// checkable against any spec sheet.
+pub fn required_bandwidth_gbs(spec: &ModelSpec, quant: &Quant, target_tps: f64, eta: f64) -> f64 {
+    if target_tps <= 0.0 || eta <= 0.0 {
+        return 0.0;
+    }
+    spec.active_bytes(quant) as f64 * target_tps / eta / 1e9
+}
+
+/// The efficiency a plan should assume for this backend and quantisation.
+///
+/// Same lookup `predict` performs, exposed so a plan states the coefficient it
+/// used and where the evidence came from rather than hiding it.
+pub fn plan_eta(fit: &Fit, backend: Backend, quant: &Quant) -> crate::fit::Coefficient {
+    let prior = DECODE_EFFICIENCY * quant.family.efficiency();
+    fit.lookup(&format!("{backend:?}"), quant.family, prior)
 }

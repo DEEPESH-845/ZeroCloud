@@ -310,7 +310,7 @@ pub fn render_with(r: &Report, color: bool) -> String {
 /// `{:?}` on `Backend` prints `Cpu`/`Metal`/`Discrete`. The first two read as
 /// typos to a user and the third names an implementation detail rather than the
 /// thing on their desk.
-fn backend_label(b: Backend) -> &'static str {
+pub fn backend_label(b: Backend) -> &'static str {
     match b {
         Backend::Cpu => "CPU",
         Backend::Metal => "Metal",
@@ -323,6 +323,19 @@ fn backend_label(b: Backend) -> &'static str {
 /// row. Padding after the last visible character breaks copy-paste out of a
 /// terminal and shows up as whitespace noise in any report pasted into an
 /// issue.
+/// Apply this renderer's line discipline to a block built elsewhere.
+///
+/// `zc plan` composes its own output, and a string built by hand would
+/// otherwise miss the two rules every other surface gets for free: no trailing
+/// whitespace, and no line past 80 columns.
+pub fn block(s: &str) -> String {
+    let mut o = String::new();
+    for line in s.trim_end_matches('\n').split('\n') {
+        push(&mut o, line);
+    }
+    o
+}
+
 /// Columns a string occupies on screen, ignoring colour escapes.
 ///
 /// `paint` wraps a cell in `\x1b[..m ... \x1b[0m`, which is nine bytes the
