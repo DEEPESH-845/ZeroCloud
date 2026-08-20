@@ -1,0 +1,40 @@
+# Supply-chain policy.
+#
+# The dependency tree was libc alone until crossterm arrived and took it to 54
+# crates. That is a defensible trade -- see the terminal-UX design -- but it is
+# only defensible while somebody is looking, and nobody was.
+
+[advisories]
+version = 2
+yanked = "deny"
+
+[licenses]
+version = 2
+# Permissive only. This ships as a single static binary that people run
+# directly, so a copyleft dependency would change what users may do with it.
+allow = [
+    "Apache-2.0",
+    "MIT",
+    "Unicode-3.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+]
+confidence-threshold = 0.9
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+
+# crossterm is the one dependency this project took deliberately, and the
+# terminal-UX design says it may be named by `zc-tui` and nothing else. That
+# promise is worth more as a build failure than as a sentence in a document.
+[[bans.deny]]
+name = "crossterm"
+wrappers = ["zc-tui"]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

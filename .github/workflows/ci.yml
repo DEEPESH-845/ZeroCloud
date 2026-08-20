@@ -49,6 +49,20 @@ jobs:
   # surface, so a malformed file from a first-time contributor must fail here
   # rather than in someone's binary. Both are compiled in, so `build` parses
   # them; `fit` and `gate` then prove they are readable end to end.
+  # 12 crates became 54 when crossterm arrived, and nothing was checking them.
+  # Advisories fail the build; the rest is an allowlist that only moves when a
+  # dependency does. The bans rule is the interesting one -- it asserts
+  # crossterm stays reachable from zc-tui alone, which is an architectural
+  # promise CI can keep better than a reviewer can remember.
+  deps:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories bans licenses sources
+
   data:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -79,6 +93,8 @@ jobs:
       # A cold CI runner benchmarks far slower than a laptop, and the first
       # frame only paints once the disk probe finishes.
       - run: ZC_SMOKE_BOOT=90 python3 scripts/tui_smoke.py ./target/release/zc
+      # Cleanup that must survive a signal. POSIX-only; skips elsewhere.
+      - run: python3 scripts/signal_smoke.py ./target/release/zc
 
   # `install.sh` is the path most users take and nothing else tests it. The
   # asset names it builds must match release.yml exactly; a mismatch means

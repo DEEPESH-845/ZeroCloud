@@ -96,7 +96,13 @@ pub fn run(
         let cs = zc_report::charset::detect();
         // A terminal failure must not cost the user their answer: fall through
         // to the static report rather than exiting.
-        if zc_tui::run::run(&full, cs).is_ok() {
+        // Ctrl-C is already safe inside the TUI -- raw mode disables ISIG, so
+        // crossterm delivers it as a key. `kill` and a closed terminal are
+        // not, and `Restore` is a Drop guard that a signal skips.
+        zc_bench::cleanup::terminal_raw(true);
+        let opened = zc_tui::run::run(&full, cs);
+        zc_bench::cleanup::terminal_raw(false);
+        if opened.is_ok() {
             // The alternate screen is gone by now. Print the report the user
             // would have got without a terminal, so the answer is in the
             // scrollback rather than lost with the screen.

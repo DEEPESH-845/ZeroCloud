@@ -65,6 +65,13 @@ echo "== contracts =="
 # Windows, where this file cannot.
 python3 scripts/contract_smoke.py ./target/release/zc
 
+echo "== signals =="
+# Drop guards do not run when a signal kills the process, and the disk
+# benchmark holds a 512 MiB scratch file through the slowest phase of a run --
+# which is when an impatient user presses Ctrl-C. Reproduced before it was
+# fixed; this keeps it fixed.
+python3 scripts/signal_smoke.py ./target/release/zc
+
 echo "== tui =="
 # The unit tests cover the state machine and the frame without a terminal.
 # They cannot cover whether the binary opens the TUI at all or whether the data
