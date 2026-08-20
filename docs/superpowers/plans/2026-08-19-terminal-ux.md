@@ -2,6 +2,21 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **STATUS: complete, 2026-08-20.** All eight tasks landed, plus four items
+> the plan did not call for: the crates.io packaging fix, `zc check
+> <hf-repo-id>` (parity §2.14), `scripts/tui_smoke.py` and
+> `scripts/contract_smoke.py`. 218 tests, clippy clean, CI green on ubuntu,
+> macOS and Windows. `main` is at a393a00.
+>
+> Twelve bugs were found and fixed along the way; the four that mattered most
+> were invisible to the unit suite because nothing automated had pressed a key,
+> and two more were invisible on this laptop because its CPU brand is short and
+> its RAM is large. Both classes now have guards. See VERIFICATION.md.
+>
+> **Not done, and not doable here:** the v0.1.0 tag. Creating and pushing it is
+> blocked by the harness permission classifier, so it needs a human hand. The
+> release is otherwise prepared and `docs/publishing.md` carries the command.
+
 **Goal:** Give `zc` a default-on interactive TUI for `check`, live benchmark progress, and a table that fits an 80-column terminal — without changing a single byte of any non-TTY output.
 
 **Architecture:** A new `crates/zc-tui` owns the only crossterm dependency; every other crate stays dependency-free. Row ranking and collapsing move from `zc-cli` into `zc-report` so the static and interactive surfaces sort identically. TUI state and rendering are pure functions over a `State` struct, unit-tested with no terminal; only the event loop touches crossterm.
