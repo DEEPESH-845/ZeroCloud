@@ -151,7 +151,7 @@ jobs:
       # The point of the whole job: one machine's worth of calibration data.
       - name: upload calibration record
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: calibration-${{ matrix.os }}
           path: crates/zc-model/data/calibration/local.jsonl
@@ -204,7 +204,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: upload merged dataset
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: calibration-merged
           path: merged/all.jsonl
