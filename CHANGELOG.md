@@ -53,7 +53,9 @@ do on it.
   an account, or anything leaving the machine that you have not seen first.
 - **`zc fit`**, **`zc gate`**, **`zc doctor`** — the fitted coefficients and
   their evidence, the published accuracy number, and a paste-ready bug report.
-- Binaries for macOS, Linux and Windows, plus `cargo install zc-cli`.
+- Binaries for macOS, Linux and Windows. The crates are packaged and verified
+  for publishing, but nothing is on crates.io yet — the Rust route is
+  `cargo install --git`.
 
 ### Known limitations
 
