@@ -88,8 +88,11 @@ def main():
         ("fit", "--kv"),
         ("gate", "--json"),
         ("share", "--top"),
+        ("plan", "--json"),
+        ("check", "--target-tps"),
     ]:
-        args = [cmd, flag] + (["f16"] if flag == "--kv" else ["3"] if flag == "--top" else [])
+        val = {"--kv": ["f16"], "--top": ["3"], "--target-tps": ["5"]}.get(flag, [])
+        args = [cmd, flag] + val
         rc, _, err = run(*args)
         check(f"`zc {cmd} {flag}` is refused", rc == 2, f"exit={rc}")
 
@@ -102,7 +105,14 @@ def main():
     check("a near-miss command suggests the real one", rc == 2 and "check" in err)
 
     # -- 80 columns, on every human-facing surface ---------------------------
-    for args in (["check", "--all"], ["check"], ["--help"], ["fit"], ["gate"]):
+    for args in (
+        ["check", "--all"],
+        ["check"],
+        ["--help"],
+        ["fit"],
+        ["gate"],
+        ["plan", "qwen3-8b", "--context", "32K"],
+    ):
         rc, out, _ = run(*args)
         wide = [l for l in out.splitlines() if len(l) > 80]
         check(f"`zc {' '.join(args)}` fits 80 columns", not wide, f"{len(wide)} over")

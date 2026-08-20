@@ -634,3 +634,43 @@ product is for.
 
 The first two are the same gap as every other Windows and Linux path in this
 document, and they close the same way: someone runs it and reports back.
+
+---
+
+# Phase: `zc plan` — 2026-08-20
+
+Parity gap G5, the last unbuilt *capability* on the llmfit list. `zc serve`
+(G10) and the web result cards (G11) remain, and both are distribution
+surfaces rather than capabilities.
+
+## What it answers
+
+`zc check` starts from the machine and asks what fits. `zc plan` starts from
+the model and asks what running it would need: memory broken into weights, KV
+and compute buffers, and the **memory bandwidth** required to hit a target
+decode rate.
+
+The bandwidth figure is the differentiated one. Decode is memory-bound, so
+`decode = eta x bandwidth / active_bytes`, and solving for bandwidth states the
+requirement in the unit that governs it. llmfit answers the same question with
+a GPU model name; a name is a lookup, and this project puts no lookup
+underneath a number.
+
+## Verified
+
+| Claim | How it was checked |
+|---|---|
+| The inversion agrees with the model it inverts | Round-trip test: predict a rate at a known bandwidth, invert it, require the bandwidth back. Five bandwidths from 30 to 1000 GB/s, agreement to 1e-6 |
+| The fixture is in the regime the inversion is exact for | The same test asserts `resident_fraction == 1.0`, so a change that made it spill would fail rather than quietly measure the wrong thing |
+| Memory terms match what a prediction charges | `requirement` is asserted equal to `kv_bytes`, `compute_buffer_bytes` and the quant size — the same functions `predict` uses |
+| Bandwidth scales with target and with active bytes | Doubling either doubles the requirement; zero target and zero eta return 0 rather than dividing by zero |
+| End to end against the running binary | Q4_K_M needs 57 GB/s for 10 t/s; this machine measured 122 GB/s, so 10 x 122/57 = 21 t/s, and the predicted midpoint is 21 |
+| An ambiguous model prefix is refused | `zc plan qwen3` lists the seven matches and exits 1 rather than picking one |
+| A context past training is refused | `--context 999K` on a 40960-token model exits 2 |
+
+## Deliberately not built
+
+GPU model recommendations (a lookup table), upgrade-path suggestions beyond
+stating the number, and `zc plan <hf-repo-id>` — the Hugging Face path has no
+quantised byte counts, which is exactly the input `plan` needs, so it would
+have nothing to say.
