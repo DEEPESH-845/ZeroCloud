@@ -76,7 +76,7 @@ jobs:
 
       - name: Open a pull request
         if: github.event_name != 'pull_request'
-        uses: peter-evans/create-pull-request@v6
+        uses: peter-evans/create-pull-request@v8
         with:
           branch: catalog/weekly-refresh
           title: "catalog: weekly refresh"
