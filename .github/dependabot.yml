@@ -1,0 +1,14 @@
+# Monthly, not weekly: 54 crates on a weekly cadence is noise, and noise is
+# how a security update gets scrolled past.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5

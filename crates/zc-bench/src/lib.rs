@@ -5,6 +5,7 @@
 //! carve-outs, thermal throttling and VM overhead are all invisible on paper
 //! and all caught here.
 
+pub mod cleanup;
 pub mod compute;
 pub mod disk;
 pub mod ram;

@@ -131,15 +131,39 @@ fn last_record(path: &std::path::Path) -> Result<String, String> {
     Ok(line.to_string())
 }
 
-fn open_in_browser(url: &str) -> std::io::Result<std::process::ExitStatus> {
+/// The program and arguments that open `url`, per platform.
+///
+/// Split out so the Windows form can be asserted from any platform. It could
+/// not be tested by running it, and it was wrong: `cmd /C start` was passing
+/// the URL through a shell that treats `&` as a command separator. Rust quotes
+/// a Windows argument only when it contains a space or a tab, and a
+/// percent-encoded URL contains neither -- so the URL arrived unquoted and
+/// `cmd` cut it at the `&` between `filename=` and `value=`. The browser got a
+/// GitHub new-file page with the name filled in and the body empty, which is
+/// the whole payload, and `cmd` tried to run the remainder as a command.
+///
+/// `rundll32 url.dll,FileProtocolHandler` has no shell between it and the
+/// argument, so there is nothing left to parse the `&`.
+pub fn browser_command(url: &str) -> (&'static str, Vec<String>) {
     #[cfg(target_os = "macos")]
-    return std::process::Command::new("open").arg(url).status();
+    return ("open", vec![url.to_string()]);
     #[cfg(all(unix, not(target_os = "macos")))]
-    return std::process::Command::new("xdg-open").arg(url).status();
+    return ("xdg-open", vec![url.to_string()]);
     #[cfg(windows)]
-    return std::process::Command::new("cmd").args(["/C", "start", ""]).arg(url).status();
+    return (
+        "rundll32",
+        vec!["url.dll,FileProtocolHandler".to_string(), url.to_string()],
+    );
     #[cfg(not(any(unix, windows)))]
-    return Err(std::io::Error::other("no browser opener on this platform"));
+    return ("", vec![url.to_string()]);
+}
+
+fn open_in_browser(url: &str) -> std::io::Result<std::process::ExitStatus> {
+    let (prog, args) = browser_command(url);
+    if prog.is_empty() {
+        return Err(std::io::Error::other("no browser opener on this platform"));
+    }
+    std::process::Command::new(prog).args(args).status()
 }
 
 pub fn run(record: Option<&str>, print_only: bool) -> i32 {
@@ -206,6 +230,38 @@ pub fn run(record: Option<&str>, print_only: bool) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The bug this guards could not be reproduced on the machine that found
+    /// it, so it is asserted on the arguments rather than on a browser.
+    ///
+    /// `zc share`'s URL carries exactly one literal `&`, separating
+    /// `filename=` from `value=`, and `value` is the whole payload. Passing
+    /// that through `cmd /C start` handed it to a shell that cuts at `&`, so a
+    /// Windows contributor got a GitHub page with a filename and an empty
+    /// body. This runs on every platform, so `windows-latest` runs it too.
+    #[test]
+    fn the_browser_argument_keeps_the_whole_url() {
+        let url = share_url("8bc574063a10f63c-921a62a1.jsonl", REC);
+        assert!(url.contains('&'), "the URL must carry the separator");
+        let (prog, args) = super::browser_command(&url);
+        assert!(!prog.is_empty());
+        // Exactly one argument is the URL, and it is the URL entire.
+        assert!(
+            args.iter().any(|a| a == &url),
+            "no argument carried the whole URL: {args:?}"
+        );
+        // Nothing after the ampersand may be split into its own argument.
+        let after = url.split_once('&').expect("separator").1;
+        assert!(
+            args.iter().any(|a| a.ends_with(after)),
+            "the payload after '&' was lost: {args:?}"
+        );
+        // And no argument may be a shell that would re-parse it.
+        assert!(
+            !prog.eq_ignore_ascii_case("cmd") && !prog.eq_ignore_ascii_case("sh"),
+            "{prog} would parse the URL again"
+        );
+    }
 
     /// A real record, copied verbatim from `data/calibration/gate.jsonl`.
     /// Using a synthetic one would let the field list in `FIELDS` drift away

@@ -298,6 +298,7 @@ impl Drop for Scratch {
     fn drop(&mut self) {
         if let Some(p) = self.0.take() {
             let _ = std::fs::remove_file(p);
+            crate::cleanup::forget_file();
         }
     }
 }
@@ -320,6 +321,10 @@ pub fn measure(target: Option<&Path>, scratch_dir: &Path, threads: usize) -> io:
             let p = scratch_dir.join(".zc-bench-scratch.tmp");
             let f = File::create(&p)?;
             scratch.0 = Some(p.clone());
+            // Drop covers every `?` below, but not a signal -- and this file
+            // exists through the slowest phase of the run, which is when an
+            // impatient user interrupts. See `cleanup`.
+            crate::cleanup::remove_on_signal(&p);
             f.set_len(MIN_SPAN)?;
             // set_len allocates sparsely; write real blocks so reads hit media
             // rather than the filesystem's hole-punching fast path.
