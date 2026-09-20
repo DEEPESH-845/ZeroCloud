@@ -1,7 +1,10 @@
 import CopyButton from "@/components/CopyButton";
 import Reveal from "@/components/Reveal";
+import CountUp from "@/components/CountUp";
+import MagneticButton from "@/components/MagneticButton";
+import BudgetSection from "@/components/budget/BudgetSection";
 
-const INSTALL = "curl -fsSL https://raw.githubusercontent.com/DEEPESH-845/ZeroCloud/main/install.sh | sh";
+import { INSTALL, Wrappable } from "@/components/Hero";
 const GH = "https://github.com/DEEPESH-845/ZeroCloud";
 
 export default function Sections() {
@@ -30,18 +33,21 @@ export default function Sections() {
         </div>
       </section>
 
+      <BudgetSection />
+
       <section id="rule">
         <div className="wrap two">
           <div className="sticky">
             <p className="eyebrow">the house rule</p>
-            <p className="rule-box">A number is measured, derived from measured inputs, or printed as <code>-</code>.</p>
+            <p className="rule-box">A number is measured, derived from measured inputs, or <span style={{ whiteSpace: "nowrap" }}>printed as <code>-</code>.</span></p>
             <p className="lede" style={{ marginTop: 22 }}>
               No fallback constants. Predictions are ranges with the confidence tier their evidence earns. Ranges narrow as the dataset grows; they are never narrowed by hand.
             </p>
           </div>
           <div className="stack reveal">
             <div>
-              <pre className="formula">{`# decode is memory-bound: every token reads the active weights once
+              <pre className="formula"><span className="c">{`# decode is memory-bound:
+# every token reads the active weights once`}</span>{`
 t_token  = resident·bytes/BW_ram + (1−resident)·bytes/BW_disk
 tok/s    = `}<i>η</i>{`(backend, quant) / t_token
 max_ctx  = (usable − weights − compute_buffers) / kv_bytes_per_token`}</pre>
@@ -72,37 +78,43 @@ max_ctx  = (usable − weights − compute_buffers) / kv_bytes_per_token`}</pre>
       <section id="what">
         <div className="wrap">
           <p className="eyebrow">what it does</p>
-          <h2>Four questions, one binary.</h2>
-          <div className="two" style={{ marginTop: 40 }}>
-            <table className="reveal">
-              <thead><tr><th>command</th><th>answers</th></tr></thead>
-              <tbody>
-                <tr><td>zc check</td><td>What can this machine run, and how fast? Ranked by verdict, then speed, then context.</td></tr>
-                <tr><td>zc plan &lt;model&gt;</td><td>What would it take to run <em>this</em> well? The answer is a bandwidth figure you can check against any spec sheet, not a GPU name.</td></tr>
-                <tr><td>zc check &lt;hf-repo&gt;</td><td>Will a model outside the 26-model catalog fit? Arithmetic over what the repository publishes.</td></tr>
-                <tr><td>zc verify &lt;model&gt;</td><td>Run it for real for 30 seconds. Predicted versus actual, appended to a dataset on your disk.</td></tr>
-                <tr><td>zc share</td><td>Turn that measurement into a pull request. Shows the whole record, then opens your browser. Never a token.</td></tr>
-                <tr><td>zc</td><td>With no arguments and a human watching: a table where every row explains itself. Piped or <code>--json</code>, plain text as always.</td></tr>
-              </tbody>
-            </table>
-            <div className="reveal">
-              <pre className="cap">{`$ zc plan qwen3-8b --context 32K
+          <h2>A browsable table, when a human is watching.</h2>
+          <p className="lede" style={{ marginTop: 16 }}>
+            <code>zc</code> with no arguments opens the same data as a table where every row explains itself. Piped, redirected, or with <code>--json</code>, it prints plain text exactly as it always has, so scripts and agents are unaffected.
+          </p>
+          <div className="reveal" style={{ marginTop: 36 }}>
+            <pre className="cap cap-wide">{`$ zc
 
-`}<span className="k">== plan ==</span>{`  qwen3-8b at 32K context, KV F16, target 10 tok/s
+  `}<span className="k">zc 0.1.0</span>{`  Apple M5 · metal · 16 GiB
+  129 GB/s ram · 5.0 GB/s disk · 429 GFLOPS · KV f16
+`}<span className="d">──────────────────────────────────────────────────────────────────────────────</span>{`
+    `}<span className="k">MODEL         QUANT    decode t/s   ctx  TTFT conf   %RAM</span>{`
+> ◐ qwen3-30b-a3b Q4_K_M     `}<span className="n">8.3-13.9</span>{`    2K  1.2s low     84%
+`}<span className="d">──────────────────────────────────────────────────────────────────────────────</span>{`
+  qwen3-30b-a3b · Q4_K_M   `}<span className="n">8.3-13.9 tok/s</span>{`
 
-  this machine   12.80 GiB budget, 131 GB/s measured, Metal
-
-  quant     weights      KV    total         needs   on this machine
-  Q4_K_M       4.68    4.50     9.40       `}<span className="n">57 GB/s</span>{`   `}<span className="ok">fits</span>{`, 17-28 t/s
-  Q5_K_M       5.45    4.50    10.17       `}<span className="n">67 GB/s</span>{`   `}<span className="ok">fits</span>{`, 15-24 t/s
-  Q6_K         6.26    4.50    10.98       `}<span className="n">77 GB/s</span>{`   `}<span className="ok">fits</span>{`, 13-21 t/s
-  Q8_0         8.11    4.50    12.83       `}<span className="n">92 GB/s</span>{`   over by 0.03 GiB
-
-  `}<span className="d">{`Bandwidth is checkable against a spec sheet. A GPU model name
-  would be a lookup, and this tool puts no lookup under a number.`}</span></pre>
-              <p className="cap-label">Built for the machines that get told &quot;you need a better GPU&quot;: 8 GB Windows laptops, old Intel Macs, WSL2, Raspberry Pis. It works on a 4090 too.</p>
-            </div>
+  weights       17.35 GiB    84% resident in RAM
+  spill          2.78 GiB    streams at 5.0 GB/s
+  bandwidth       129 GB/s   measured on this machine
+  eta           0.875        fitted, confidence low
+  context          2K        KV f16 at 0.09 MiB/token
+  TTFT           1.2s        for a 2048-token prompt
+`}<span className="d">──────────────────────────────────────────────────────────────────────────────</span>{`
+  `}<span className="d">1 of 26 · sort verdict · enter why · / filter · a quants · ? keys · q quit</span></pre>
+            <p className="cap-label">That pane is the point. Other tools print a score; <code>zc</code> measured your machine, so it can print the derivation and let you check it. Those weights do not fit, 2.78 GiB of them stream from a disk measured at 5.0 GB/s, and that is why the prediction is 8.3-13.9 tok/s rather than something faster.</p>
           </div>
+          <table className="reveal" style={{ marginTop: 48 }}>
+            <thead><tr><th>command</th><th>answers</th></tr></thead>
+            <tbody>
+              <tr><td>zc check</td><td>What can this machine run, and how fast? Ranked by verdict, then speed, then context.</td></tr>
+              <tr><td>zc plan &lt;model&gt;</td><td>What would it take to run <em>this</em> well? The answer is a bandwidth figure you can check against any spec sheet, not a GPU name.</td></tr>
+              <tr><td>zc check &lt;hf-repo&gt;</td><td>Will a model outside the 26-model catalog fit? Arithmetic over what the repository publishes.</td></tr>
+              <tr><td>zc verify &lt;model&gt;</td><td>Run it for real for 30 seconds. Predicted versus actual, appended to a dataset on your disk.</td></tr>
+              <tr><td>zc share</td><td>Turn that measurement into a pull request. Shows the whole record, then opens your browser. Never a token.</td></tr>
+              <tr><td>zc doctor</td><td>Everything probed, measured and concluded, as Markdown for a bug report.</td></tr>
+            </tbody>
+          </table>
+          <p className="cap-label" style={{ marginTop: 14 }}>Built for the machines that get told &quot;you need a better GPU&quot;: 8 GB Windows laptops, old Intel Macs, WSL2, Raspberry Pis. It works on a 4090 too.</p>
         </div>
       </section>
 
@@ -111,9 +123,9 @@ max_ctx  = (usable − weights − compute_buffers) / kv_bytes_per_token`}</pre>
           <p className="eyebrow">accuracy · recompute it with <code>zc gate</code></p>
           <h2>How wrong it has been, out of sample.</h2>
           <div className="stats reveal" style={{ marginTop: 36 }}>
-            <div className="stat"><b>9.4<small>%</small></b><span>median error per machine</span></div>
-            <div className="stat"><b>8<small>machines</small></b><span>7 hypervisor, 1 bare metal, 15 runs</span></div>
-            <div className="stat"><b>66.7<small>%</small></b><span>of measurements landed inside the published range</span></div>
+            <div className="stat"><CountUp value={9.4} decimals={1} suffix="%" /><span>median error per machine</span></div>
+            <div className="stat"><CountUp value={8} suffix="machines" /><span>7 hypervisor, 1 bare metal, 15 runs</span></div>
+            <div className="stat"><CountUp value={66.7} decimals={1} suffix="%" /><span>of measurements landed inside the published range</span></div>
           </div>
           <div className="two" style={{ marginTop: 40 }}>
             <div className="note reveal">
@@ -126,7 +138,7 @@ max_ctx  = (usable − weights − compute_buffers) / kv_bytes_per_token`}</pre>
               <p className="lede" style={{ fontSize: 16, marginTop: 10 }}>
                 A Windows laptop, a Linux desktop, an old Intel Mac. Three commands, about twenty minutes, and the record is written to your disk only until you say otherwise.
               </p>
-              <ol className="steps" style={{ marginTop: 18 }}>
+              <ol className="steps reveal" style={{ marginTop: 18 }}>
                 <li><div><code>ollama pull qwen3:1.7b</code><small>or measure whatever you already have</small></div></li>
                 <li><div><code>zc verify qwen3:1.7b</code><small>30s: predicted vs actual, written to your disk only</small></div></li>
                 <li><div><code>zc share</code><small>shows you the record and what is not in it, then offers to open a browser</small></div></li>
@@ -145,10 +157,10 @@ max_ctx  = (usable − weights − compute_buffers) / kv_bytes_per_token`}</pre>
           </p>
           <div className="ctas" style={{ marginTop: 32, maxWidth: 720 }}>
             <div className="install">
-              <code>{INSTALL}</code>
+              <code><Wrappable text={INSTALL} /></code>
               <CopyButton text={INSTALL} />
             </div>
-            <p className="alt"><a href={`${GH}/releases/latest`}>Windows .exe from Releases</a><a href={`${GH}#install`}>Build from source</a></p>
+            <p className="alt"><MagneticButton className="pill" href={`${GH}/releases/latest`}>Windows .exe from Releases</MagneticButton><MagneticButton className="pill" href={`${GH}#install`}>Build from source</MagneticButton></p>
             <p className="facts"><span>cargo install --git {GH} zc-cli</span></p>
           </div>
         </div>
