@@ -1,0 +1,5 @@
+# Pinned so a new stable release cannot turn main red with no code change:
+# CI denies warnings, and each release adds clippy lints. Bump deliberately.
+[toolchain]
+channel = "1.98.0"
+components = ["clippy"]

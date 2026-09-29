@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       # Self-test first: a validator whose own fixtures fail cannot be trusted
       # to have judged the submission, and it would fail open otherwise.
       - run: python3 scripts/validate_calibration.py --self-test

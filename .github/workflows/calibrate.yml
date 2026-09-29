@@ -56,10 +56,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
+      - uses: actions/checkout@v7
       - uses: Swatinem/rust-cache@v2
       - name: test
         run: cargo test --workspace
@@ -84,8 +81,7 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v7
       - uses: Swatinem/rust-cache@v2
 
       # Release build is mandatory, not a preference. A debug build's FMA loop
@@ -151,7 +147,7 @@ jobs:
       # The point of the whole job: one machine's worth of calibration data.
       - name: upload calibration record
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: calibration-${{ matrix.os }}
           path: crates/zc-model/data/calibration/local.jsonl
@@ -168,12 +164,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v7
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --release
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: calibration-*
           path: collected
@@ -204,7 +199,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: upload merged dataset
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: calibration-merged
           path: merged/all.jsonl
