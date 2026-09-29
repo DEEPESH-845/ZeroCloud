@@ -674,3 +674,30 @@ GPU model recommendations (a lookup table), upgrade-path suggestions beyond
 stating the number, and `zc plan <hf-repo-id>` — the Hugging Face path has no
 quantised byte counts, which is exactly the input `plan` needs, so it would
 have nothing to say.
+
+---
+
+# Phase: detection gaps, `zc serve`, result cards — 2026-09-30
+
+## Verified
+
+| Claim | How it was checked |
+|---|---|
+| Power, low-power and throttle state are read on macOS | Release binary on an M5 on AC: `on_battery: false`, `low_power: false`, `throttled: false`; the thermal-pressure notify key read 0 from a standalone C probe first |
+| The pmset, Linux power-supply and Windows `MhzLimit` parsers | Unit tests on verbatim `pmset` output and hand-built fixtures, run on every CI OS |
+| An Intel Mac's Radeon is listed and kept off the GPU path | Fixture from a 2019 MacBook Pro's `system_profiler`: 8 GiB VRAM parsed, `usable_for_compute() == false`. Ollama's CPU-only status on Intel Macs checked against current docs, not memory |
+| The budget no longer subtracts firmware-reserved memory | It was always 0 or `None` before, so no prediction moved; the field is now labelled as already excluded from `total` |
+| `zc serve` answers what `--json` prints, and refuses what it should | `contract_smoke.py` on ubuntu, macOS and Windows: `/v1/check`, `/v1/plan`, 400 on an unknown parameter, 403 on a rebound `Host`, 405 on POST, empty stdout |
+| `zc serve --mcp` speaks both protocol generations | Unit tests for `initialize`, `server/discover`, per-request `_meta` version (-32022), notifications, tool errors in the result; an end-to-end session in `contract_smoke.py` on every OS |
+| Nested JSON keys cannot answer for top-level ones | `json::members`/`field` tests, and both added to the 10,000-input fuzz loop |
+| A card link decodes, and the page survives a bad one | `contract_smoke.py` decodes a real `--card` URL; the page rendered in Chromium under `/ZeroCloud/` at 1280 and 390 px with a real card, no card, and a truncated one — no console errors, no horizontal scroll |
+
+## NOT verified
+
+| Item | Status |
+|---|---|
+| Battery, Battery Saver and throttling on real Windows hardware | `GetSystemPowerStatus` and `CallNtPowerInformation` compile and run on `windows-latest`, a VM on AC with no limit — so only the "nothing to report" path has executed |
+| Linux throttle counters and AMD APU carve-out on real hardware | Counters are Intel-only in sysfs; no Linux laptop or APU has run this. CI's runners have neither |
+| An Intel Mac end to end | Only the parser fixture. The live `system_profiler` path is the one Apple Silicon already uses |
+| `firmware_reserved` on Windows | `GetPhysicallyInstalledSystemMemory` needs SMBIOS; a VM may report nothing, which reads as unknown |
+| The card page on GitHub Pages itself | Verified on a local server with the same base path. The live URL exists only once the repository is public and Pages is enabled |
