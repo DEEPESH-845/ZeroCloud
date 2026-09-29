@@ -85,8 +85,11 @@ def main():
                 size = os.path.getsize(scratch)
             except OSError:
                 size = 0
-            os.killpg(os.getpgid(p.pid), signal.SIGINT)
-            sent = True
+            # The file exists before its first write lands; interrupting then
+            # tests nothing and reads as a 0 MiB failure on a busy machine.
+            if size > 0:
+                os.killpg(os.getpgid(p.pid), signal.SIGINT)
+                sent = True
         r, _, _ = select.select([m], [], [], 0.02)
         if r:
             try:
