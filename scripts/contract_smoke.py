@@ -139,6 +139,23 @@ def main():
     flat = " ".join(out.split())
     check("the calibration dataset is embedded", "shipped in this binary" in flat)
 
+    # -- a card is one URL whose fragment decodes to the v1 shape -----------
+    import base64
+    rc, out, _ = run("check", "--card")
+    url = out.strip()
+    ok = rc == 0 and "\n" not in url and "#v1." in url
+    decoded = ""
+    try:
+        frag = url.split("#v1.", 1)[1]
+        decoded = base64.urlsafe_b64decode(frag + "=" * (-len(frag) % 4)).decode()
+        card = json.loads(decoded)
+        ok = ok and card.get("v") == 1 and 0 < len(card.get("rows", [])) <= 8
+    except (IndexError, ValueError):
+        ok = False
+    check("check --card prints one decodable card URL", ok, url[:60])
+    # Checked on the decoded payload: the URL itself is base64.
+    check("a card carries no $HOME", bool(decoded) and home not in decoded)
+
     serve_http()
     serve_mcp()
 

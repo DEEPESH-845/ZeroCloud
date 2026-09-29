@@ -18,6 +18,7 @@ EXAMPLES
     zc                    browse what this machine can run  (arrows, ? for keys)
     zc check --top 5      the five best fits, as plain text
     zc check --json       the same data, for a script or an agent
+    zc check --card       a link to a shareable card of the result
     zc verify qwen3:1.7b  run the model for real and compare
     zc check Qwen/Qwen3-4B  will a model outside the catalog fit? (fetches)
     zc plan qwen3-8b --context 32K
@@ -27,7 +28,8 @@ EXAMPLES
     zc doctor             a paste-ready report for a bug
 
 USAGE
-    zc [check] [--json] [--kv f16|q8|q4] [--top N] [--all] [--tui | --no-tui]
+    zc [check] [--json | --card] [--kv f16|q8|q4] [--top N] [--all]
+               [--tui | --no-tui]
                           probe hardware and predict model performance
     zc check <hf-repo-id> will one model that is not in the catalog fit?
                           the only command that touches the network
@@ -98,6 +100,11 @@ zc check
                                                 {low,high}, max_context, ttft_s,
                                                 confidence, resident_fraction
                    verdict is one of good|usable|slow|wont_fit.
+                   `--card` prints one URL instead: a page on the project site
+                   that draws the top rows (at most 8) as a card to share. The
+                   result rides in the part after `#`, which a browser never
+                   sends to the server; it carries the CPU, memory, backend,
+                   bandwidth and rows, and no path, hostname or serial.
                    ttft_s and prefill_tok_s are null until `zc verify` has
                    measured this backend - they are never derived.
 
@@ -223,6 +230,7 @@ fn main() {
     let target_tps = take_value(&mut args, "--target-tps");
     let force_tui = take_flag(&mut args, "--tui");
     let no_tui = take_flag(&mut args, "--no-tui");
+    let card = take_flag(&mut args, "--card");
     let port = take_value(&mut args, "--port");
     let mcp = take_flag(&mut args, "--mcp");
     let cmd = args.first().map(String::as_str).unwrap_or("check");
@@ -259,6 +267,7 @@ fn main() {
         ("--target-tps", target_tps.is_some()),
         ("--tui", force_tui),
         ("--no-tui", no_tui),
+        ("--card", card),
         ("--port", port.is_some()),
         ("--mcp", mcp),
     ];
@@ -340,6 +349,10 @@ fn main() {
     // Requested and impossible is an error, never a silent downgrade -- the
     // standing rule about substituting a fallback for the thing that was asked
     // for applies to the interface as much as to a measurement.
+    if card && (as_json || force_tui) {
+        eprintln!("--card prints a link; it does not combine with --json or --tui");
+        std::process::exit(2);
+    }
     if force_tui && !interactive {
         eprintln!("--tui needs an interactive terminal on both stdin and stdout");
         std::process::exit(2);
@@ -352,7 +365,7 @@ fn main() {
         .filter(|_| cmd == "check")
         .filter(|a| hf::looks_like_repo_id(a))
         .cloned();
-    let tui = cmd == "check" && interactive && hf_repo.is_none();
+    let tui = cmd == "check" && interactive && hf_repo.is_none() && !card;
 
     // `zc plan` needs a model, and its own flags parsed before the benchmark
     // runs -- a typo should not cost the user two seconds of probing first.
@@ -401,14 +414,14 @@ fn main() {
             plan_cmd::run(&m, &fit, kv, &model, ctx, quant.as_deref(), tps, as_json)
         }
         None if hf_repo.is_some() => {
-            if as_json {
-                eprintln!("`zc check <hf-repo-id>` has no --json output yet -- it reports memory");
+            if as_json || card {
+                eprintln!("`zc check <hf-repo-id>` has no --json or --card output yet -- it reports memory");
                 eprintln!("only, and the shape is not settled. Drop --json, or use a catalog id.");
                 std::process::exit(2);
             }
             check::run_hf(&m, kv, &hf_repo.unwrap())
         }
-        None => check::run(&m, &fit, kv, top, show_all, as_json, tui),
+        None => check::run(&m, &fit, kv, top, show_all, as_json, tui, card),
     };
     std::process::exit(code);
 }
@@ -451,7 +464,7 @@ fn distance(a: &str, b: &str) -> usize {
 /// accept it in silence.
 fn accepts(cmd: &str, flag: &str) -> bool {
     let ok: &[&str] = match cmd {
-        "check" => &["--json", "--kv", "--top", "--all", "--tui", "--no-tui"],
+        "check" => &["--json", "--card", "--kv", "--top", "--all", "--tui", "--no-tui"],
         "verify" => &["--runtime", "--kv"],
         "doctor" => &["--kv"],
         "share" => &["--record", "--print"],

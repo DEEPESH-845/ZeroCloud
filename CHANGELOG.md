@@ -38,6 +38,9 @@ Entries name the *symptom*, because that is what a user recognises.
   every MCP revision from 2024-11-05 to the stateless 2026-07-28. Loopback
   only, GET only, and a non-loopback `Host` is refused against DNS rebinding.
 - `zc plan --json`.
+- **`zc check --card` prints a link to a shareable card of your result.** The
+  page is static, on GitHub Pages, and reads the result from the link's `#`
+  fragment, which browsers never send to a server -- so nothing is uploaded.
 - **`zc check` says when the numbers were taken on battery, in low-power mode,
   or while the CPU was throttled.** Each distorts a laptop's measurements
   without changing its hardware, so a slow result now says whether the machine

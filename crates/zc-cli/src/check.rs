@@ -14,6 +14,9 @@ const PROMPT: u32 = 2048;
 /// printing all of it buries what a constrained machine can run under what it
 /// cannot. Shared with `zc serve`, which applies the same cut.
 pub const DEFAULT_TOP: usize = 20;
+/// Where result cards render. The site is a static export published to GitHub
+/// Pages by `.github/workflows/site.yml`; the payload rides in the fragment.
+pub const CARD_URL: &str = "https://deepesh-845.github.io/ZeroCloud/card/";
 
 /// Assemble the report every surface renders.
 ///
@@ -88,6 +91,7 @@ pub fn rows<'a>(
     (models, total)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     m: &Machine,
     fit: &Fit,
@@ -96,6 +100,7 @@ pub fn run(
     all_quants: bool,
     as_json: bool,
     tui: bool,
+    card: bool,
 ) -> i32 {
     // The catalog is borrowed from by every Row, so it has to outlive them.
     let specs = catalog::load();
@@ -140,6 +145,10 @@ pub fn run(
         models.truncate(n);
     }
     let plain = report(m, fit, kv, models, total_rows);
+    if card {
+        println!("{CARD_URL}#{}", zc_report::card::payload(&plain));
+        return 0;
+    }
     print!(
         "{}",
         if as_json {

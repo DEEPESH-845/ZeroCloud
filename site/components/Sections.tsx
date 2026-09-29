@@ -111,6 +111,8 @@ max_ctx  = (usable − weights − compute_buffers) / kv_bytes_per_token`}</pre>
               <tr><td>zc check &lt;hf-repo&gt;</td><td>Will a model outside the 26-model catalog fit? Arithmetic over what the repository publishes.</td></tr>
               <tr><td>zc verify &lt;model&gt;</td><td>Run it for real for 30 seconds. Predicted versus actual, appended to a dataset on your disk.</td></tr>
               <tr><td>zc share</td><td>Turn that measurement into a pull request. Shows the whole record, then opens your browser. Never a token.</td></tr>
+              <tr><td>zc check --card</td><td>A link to a card of your result, to post anywhere. The result rides in the link after the <code>#</code>; nothing is uploaded.</td></tr>
+              <tr><td>zc serve</td><td>The same answers over HTTP on localhost, or as MCP tools with <code>--mcp</code>, so an AI assistant can ask what your machine runs.</td></tr>
               <tr><td>zc doctor</td><td>Everything probed, measured and concluded, as Markdown for a bug report.</td></tr>
             </tbody>
           </table>

@@ -1,0 +1,62 @@
+# Publishes site/ -- the landing page and the result cards that
+# `zc check --card` links to -- to GitHub Pages.
+#
+# The card URL is compiled into the binary (CARD_URL in crates/zc-cli/src/
+# check.rs), so this is the page every card link a user has ever shared
+# resolves to. Keep /card/ working.
+#
+# One-time setup, after the repository is public:
+#   gh api -X POST repos/DEEPESH-845/ZeroCloud/pages -f build_type=workflow
+# Skipped while the repository is private, where Pages is unavailable on the
+# free plan and the deploy could only fail.
+name: site
+
+on:
+  push:
+    branches: [main]
+    paths: ["site/**", ".github/workflows/site.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: ${{ !github.event.repository.private }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: site
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - run: npm ci
+      # Pages serves a project site under /<repo>/.
+      - run: npm run build
+        env:
+          PAGES_BASE_PATH: /${{ github.event.repository.name }}
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: site/out
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

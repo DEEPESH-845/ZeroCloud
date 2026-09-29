@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from "motion/react";
 
 const MICRO = 0.16; // mirrors --dur-micro
 
-export default function CopyButton({ text }: { text: string }) {
+export default function CopyButton({ text, label: srLabel = "Copy install command" }: { text: string; label?: string }) {
   const [label, setLabel] = useState("Copy");
   async function copy() {
     try {
@@ -17,7 +17,7 @@ export default function CopyButton({ text }: { text: string }) {
   }
   return (
     <motion.button type="button" onClick={copy} whileTap={{ scale: 0.97 }}>
-      <span className="sr-only" aria-live="polite">{label === "Copy" ? "Copy install command" : label}</span>
+      <span className="sr-only" aria-live="polite">{label === "Copy" ? srLabel : label}</span>
       <AnimatePresence mode="popLayout" initial={false}>
         <motion.span
           aria-hidden="true"

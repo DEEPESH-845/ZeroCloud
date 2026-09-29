@@ -60,7 +60,7 @@ $ zc check --top 8
 ## Contents
 
 - [Install](#install)
-- [What it does](#what-it-does) — `check`, `plan`, `verify`, the browsable table, and `serve` for agents
+- [What it does](#what-it-does) — `check`, `plan`, `verify`, the browsable table, shareable cards, and `serve` for agents
 - [Why measure instead of looking up specs](#why-measure-instead-of-looking-up-specs)
 - [Every number is checkable](#every-number-is-checkable) — the house rule, and current accuracy
 - [The one thing this project needs](#the-one-thing-this-project-needs)
@@ -233,6 +233,17 @@ the kind of number this tool exists to not print.
 > This is the only command that opens a connection. It prints each URL first,
 > sends nothing about your machine, and holds no token — so a gated repo like
 > Llama or Gemma answers 401 until you accept its licence on huggingface.co.
+
+### Share what your machine can run
+
+```sh
+zc check --card
+```
+
+prints one link to a card of your result: the machine, its measured bandwidth,
+and the top models with their speed ranges, ready to post anywhere. The result
+rides in the part of the link after `#`, which browsers never send to a server,
+so the page learns nothing you did not paste and nothing is uploaded.
 
 ### For other programs, and for AI agents
 
