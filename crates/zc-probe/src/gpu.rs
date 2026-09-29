@@ -67,6 +67,11 @@ pub struct Gpu {
     /// `Vendor: Apple (0x106b)` with Metal support, and only the real one
     /// reports how many cores it has. See [`Gpu::usable_for_compute`].
     pub cores: Option<u32>,
+    /// System RAM the firmware reserved for this integrated part at boot, in
+    /// bytes. Already missing from `Memory::total`; recorded so the report can
+    /// explain the gap. 0 when not reported, which is every source except
+    /// amdgpu on Linux (an APU's BIOS-set UMA frame buffer).
+    pub carveout_bytes: u64,
 }
 
 impl Gpu {
@@ -87,6 +92,7 @@ impl Gpu {
             source,
             name,
             cores: None,
+            carveout_bytes: 0,
         }
     }
 
@@ -104,6 +110,12 @@ impl Gpu {
     pub fn usable_for_compute(&self) -> bool {
         match self.vendor {
             Vendor::Apple => self.cores.is_some(),
+            // An Intel Mac's discrete Radeon is real, but nothing zc calibrates
+            // against drives it: Ollama is CPU-only on Intel Macs (its AMD
+            // support is ROCm, Linux and Windows only) and LM Studio does not
+            // ship for them. Predicting GPU speed there promises what never
+            // arrives, so the card is shown and the CPU path is predicted.
+            _ if cfg!(target_os = "macos") => false,
             // Every other vendor is discovered through a driver interface that
             // would not have answered at all if the card were not real.
             _ => true,
@@ -291,7 +303,7 @@ const CMD_TIMEOUT_S: u64 = 4;
 /// `zc` is about to exit anyway. Revisit if `zc serve` ever polls this in a
 /// long-lived process.
 #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
-fn run(prog: &str, args: &[&str]) -> Option<String> {
+pub(crate) fn run(prog: &str, args: &[&str]) -> Option<String> {
     use std::process::{Command, Stdio};
     let (tx, rx) = std::sync::mpsc::channel();
     let prog = prog.to_string();
@@ -372,9 +384,8 @@ mod imp {
     ///
     /// 1-2 seconds against a ~20 s benchmark is noise; an 822% error is not.
     ///
-    /// Intel Macs with a discrete AMD card are still not detected: on those
-    /// `unified` is false, so they already take the CPU path and this changes
-    /// nothing for them.
+    /// Intel Macs with a discrete AMD card are listed with their `VRAM
+    /// (Total)`, and [`Gpu::usable_for_compute`] keeps them off the GPU path.
     pub fn detect() -> Vec<Gpu> {
         match run("system_profiler", &["SPDisplaysDataType"]) {
             Some(out) => parse(&out),
@@ -395,6 +406,14 @@ mod imp {
                 // Apple parts share the system pool, so 0 VRAM is correct here
                 // and `Gpu::new` enforces it for anything integrated anyway.
                 gpus.push(Gpu::new(name.trim().to_string(), 0, "system_profiler"));
+            } else if let Some(v) = line.strip_prefix("VRAM (Total):") {
+                // Discrete cards only; an Intel iGPU prints `VRAM (Dynamic,
+                // Max)`, which is system memory it may borrow, not VRAM.
+                if let (Some(g), Some(bytes)) = (gpus.last_mut(), parse_size(v)) {
+                    let cores = g.cores;
+                    *g = Gpu::new(std::mem::take(&mut g.name), bytes, "system_profiler");
+                    g.cores = cores;
+                }
             } else if let Some(n) = line.strip_prefix("Total Number of Cores:") {
                 // Belongs to the most recent chipset block. Absent entirely on
                 // a paravirtual adapter, which is the whole point.
@@ -404,6 +423,17 @@ mod imp {
             }
         }
         gpus
+    }
+
+    /// `8 GB` or `4096 MB`, as system_profiler prints VRAM.
+    fn parse_size(v: &str) -> Option<u64> {
+        let mut f = v.split_whitespace();
+        let n: u64 = f.next()?.parse().ok()?;
+        match f.next()? {
+            "GB" => Some(n << 30),
+            "MB" => Some(n << 20),
+            _ => None,
+        }
     }
 }
 
@@ -494,7 +524,13 @@ mod imp {
                     _ => "Intel Graphics".to_string(),
                 }
             });
-            gpus.push(Gpu::new(name, vram.unwrap_or(0), "sysfs"));
+            let mut g = Gpu::new(name, vram.unwrap_or(0), "sysfs");
+            // On an APU, amdgpu's "VRAM" is the UMA frame buffer the BIOS
+            // carved out of system RAM before the kernel booted.
+            if g.integrated && vendor == 0x1002 {
+                g.carveout_bytes = vram.unwrap_or(0);
+            }
+            gpus.push(g);
         }
         gpus
     }
@@ -600,6 +636,45 @@ Graphics/Displays:
       Vendor: Apple (0x106b)
       Metal Support: Metal 3
 ";
+
+    /// Trimmed from a 2019 16-inch MacBook Pro: an Intel iGPU and a Radeon.
+    #[cfg(target_os = "macos")]
+    const INTEL_MAC: &str = "\
+Graphics/Displays:
+
+    Intel UHD Graphics 630:
+
+      Chipset Model: Intel UHD Graphics 630
+      Type: GPU
+      Bus: Built-In
+      VRAM (Dynamic, Max): 1536 MB
+      Vendor: Intel
+
+    AMD Radeon Pro 5500M:
+
+      Chipset Model: AMD Radeon Pro 5500M
+      Type: GPU
+      Bus: PCIe
+      PCIe Lane Width: x16
+      VRAM (Total): 8 GB
+      Vendor: AMD (0x1002)
+      Metal Support: Metal 3
+";
+
+    /// The card is detected with its real VRAM, so the report and the machine
+    /// fingerprint can name it -- and it is not used for compute, because no
+    /// runtime zc calibrates against drives it on an Intel Mac.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn an_intel_macs_radeon_is_listed_but_not_used() {
+        let g = super::imp::parse(INTEL_MAC);
+        assert_eq!(g.len(), 2);
+        assert!(g[0].integrated && g[0].vram_bytes == 0, "Dynamic, Max is not VRAM");
+        assert_eq!(g[1].vendor, Vendor::Amd);
+        assert!(!g[1].integrated);
+        assert_eq!(g[1].vram_bytes, 8 << 30);
+        assert!(!g[1].usable_for_compute());
+    }
 
     /// Real silicon reports its shader cores, so it may drive the Metal path.
     #[cfg(target_os = "macos")]

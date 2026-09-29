@@ -29,6 +29,7 @@ pub fn report<'a>(
         env: &m.env,
         storage: &m.storage,
         gpus: &m.gpus,
+        power: &m.power,
         ram: &m.ram,
         compute: &m.compute,
         disk: m.disk.as_ref(),

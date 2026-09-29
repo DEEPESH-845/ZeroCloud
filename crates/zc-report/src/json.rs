@@ -70,6 +70,14 @@ pub fn render(r: &Report) -> String {
         opt_u(r.env.memory_ceiling),
         opt_st(r.env.warning.as_deref()),
     ));
+    // Conditions the measurements were taken under. `null` is "the platform
+    // did not say", never "no".
+    o.push_str(&format!(
+        "\"power\":{{\"on_battery\":{},\"low_power\":{},\"throttled\":{}}},",
+        opt_b(r.power.on_battery),
+        opt_b(r.power.low_power),
+        opt_b(r.power.throttled),
+    ));
     o.push_str(&format!(
         "\"storage\":{{\"model_dir\":{},\"mount\":{},\"fstype\":{},\"medium\":{},\
          \"source\":{},\"total\":{},\"free\":{},\"bench_file_is_weight\":{},\"hazards\":[",
@@ -100,7 +108,7 @@ pub fn render(r: &Report) -> String {
         }
         o.push_str(&format!(
             "{{\"name\":{},\"vendor\":{},\"vram_bytes\":{},\"integrated\":{},\"count\":{},\
-             \"source\":{},\"bw_gbs\":{},\"bw_measured\":false}}",
+             \"source\":{},\"bw_gbs\":{},\"bw_measured\":false,\"usable\":{},\"carveout_bytes\":{}}}",
             st(&g.name),
             st(g.vendor.tag()),
             g.vram_bytes,
@@ -108,6 +116,8 @@ pub fn render(r: &Report) -> String {
             g.count,
             st(g.source),
             num(g.bw_gbs),
+            g.usable_for_compute(),
+            g.carveout_bytes,
         ));
     }
     o.push_str("],");
@@ -217,6 +227,10 @@ fn st(s: &str) -> String {
 
 fn opt_st(s: Option<&str>) -> String {
     s.map_or_else(|| "null".to_string(), st)
+}
+
+fn opt_b(v: Option<bool>) -> String {
+    v.map_or_else(|| "null".into(), |b| b.to_string())
 }
 
 fn opt_u(v: Option<u64>) -> String {

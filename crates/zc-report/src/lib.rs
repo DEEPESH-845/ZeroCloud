@@ -18,7 +18,7 @@ pub mod text;
 
 use zc_bench::{compute::ComputeResult, disk::DiskResult, ram::RamResult};
 use zc_model::{Backend, Prediction, Quant, Verdict};
-use zc_probe::{cpu::Cpu, env::Env, gpu::Gpu, memory::Memory, storage::Storage};
+use zc_probe::{cpu::Cpu, env::Env, gpu::Gpu, memory::Memory, power::Power, storage::Storage};
 
 /// One prediction, plus the identity of what was predicted.
 pub struct Row<'a> {
@@ -56,6 +56,7 @@ pub struct Report<'a> {
     pub env: &'a Env,
     pub storage: &'a Storage,
     pub gpus: &'a [Gpu],
+    pub power: &'a Power,
     pub ram: &'a RamResult,
     pub compute: &'a ComputeResult,
     /// `None` when the disk measurement failed. Never substituted with a

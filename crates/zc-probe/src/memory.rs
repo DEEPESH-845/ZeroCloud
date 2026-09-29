@@ -12,6 +12,10 @@ pub struct Memory {
     pub page_size: u64,
     /// RAM the firmware carved out before the OS booted — almost always the
     /// integrated GPU's aperture. `None` when we can't determine it.
+    ///
+    /// **Already excluded from `total`** on every platform: the OS never sees
+    /// it. It explains why `total` is below the RAM that was bought, and must
+    /// never be subtracted from `total` again.
     pub firmware_reserved: Option<u64>,
     /// macOS caps how much unified memory the GPU may wire down.
     /// `None` on non-Apple platforms.
@@ -148,8 +152,9 @@ mod imp {
             total,
             available,
             page_size: unsafe { libc::sysconf(libc::_SC_PAGESIZE) as u64 },
-            // Comparing SMBIOS installed capacity against MemTotal reveals the
-            // firmware carve-out, but reading DMI usually needs root. Deferred.
+            // SMBIOS installed capacity would reveal it, but DMI needs root.
+            // An AMD APU's carve-out is readable from amdgpu instead; the
+            // caller fills it in from the GPU probe (`Gpu::carveout_bytes`).
             firmware_reserved: None,
             gpu_wired_limit: None,
             unified: false,
@@ -163,7 +168,7 @@ mod imp {
 mod imp {
     use super::Memory;
     use windows_sys::Win32::System::SystemInformation::{
-        GlobalMemoryStatusEx, MEMORYSTATUSEX,
+        GetPhysicallyInstalledSystemMemory, GlobalMemoryStatusEx, MEMORYSTATUSEX,
     };
 
     pub fn probe() -> Memory {
@@ -172,15 +177,18 @@ mod imp {
         let ok = unsafe { GlobalMemoryStatusEx(&mut st) } != 0;
 
         let total = if ok { st.ullTotalPhys } else { 0 };
+        // SMBIOS installed capacity, no elevation needed. The difference is
+        // what Task Manager calls "Hardware reserved".
+        let mut installed_kb = 0u64;
+        let installed = unsafe { GetPhysicallyInstalledSystemMemory(&mut installed_kb) } != 0;
         Memory {
             total,
             // ullAvailPhys is already "available", not "free" — it counts
             // standby (cached) pages the memory manager can hand back.
             available: if ok { st.ullAvailPhys } else { total * 7 / 10 },
             page_size: 4096,
-            // Sum of Win32_PhysicalMemory.Capacity minus ullTotalPhys gives the
-            // iGPU carve-out. Needs WMI; deferred to the WMI step.
-            firmware_reserved: None,
+            firmware_reserved: (ok && installed)
+                .then(|| (installed_kb * 1024).saturating_sub(total)),
             gpu_wired_limit: None,
             unified: false,
         }

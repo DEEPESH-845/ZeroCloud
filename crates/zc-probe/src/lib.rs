@@ -7,6 +7,7 @@ pub mod cpu;
 pub mod env;
 pub mod gpu;
 pub mod memory;
+pub mod power;
 pub mod storage;
 
 /// Format bytes as GiB/MiB. Binary units, because that's what RAM is sold in

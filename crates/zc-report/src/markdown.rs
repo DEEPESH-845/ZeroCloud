@@ -85,6 +85,10 @@ pub fn render(r: &Report, fit_summary: &str) -> String {
             .map_or_else(|| "unknown".into(), human),
     );
     row(p, "virtualisation", r.env.virt_tag());
+    let tri = |v: Option<bool>| v.map_or("unknown", |b| if b { "yes" } else { "no" });
+    row(p, "on battery", tri(r.power.on_battery));
+    row(p, "low-power mode", tri(r.power.low_power));
+    row(p, "throttled during benchmark", tri(r.power.throttled));
     row(p, "backend", crate::backend_tag(r.backend));
     row(
         p,
@@ -131,6 +135,8 @@ pub fn render(r: &Report, fit_summary: &str) -> String {
                     // "shares system memory" instead.
                     if g.integrated {
                         "- (shares system memory)".to_string()
+                    } else if !g.usable_for_compute() {
+                        "- (not used by a supported runtime)".to_string()
                     } else {
                         format!("{:.0} GB/s (looked up)", g.bw_gbs)
                     }
@@ -252,12 +258,16 @@ pub fn render(r: &Report, fit_summary: &str) -> String {
     line(p, "```\n");
 
     // -- anything we already know is wrong -----------------------------------
-    if !r.storage.hazards.is_empty() || r.env.warning.is_some() {
+    let power = r.power.warnings();
+    if !r.storage.hazards.is_empty() || r.env.warning.is_some() || !power.is_empty() {
         line(p, "## Warnings\n");
         for h in &r.storage.hazards {
             line(p, &format!("- {h:?}"));
         }
         if let Some(w) = &r.env.warning {
+            line(p, &format!("- {w}"));
+        }
+        for w in &power {
             line(p, &format!("- {w}"));
         }
         line(p, "");

@@ -7,7 +7,7 @@
 
 use zc_bench::{compute, disk, ram};
 use zc_model::{predict, Backend, Hardware};
-use zc_probe::{cpu, env, gpu, memory, storage};
+use zc_probe::{cpu, env, gpu, memory, power, storage};
 
 pub struct Machine {
     pub mem: memory::Memory,
@@ -17,6 +17,9 @@ pub struct Machine {
     /// Every adapter found, integrated ones included. Only the largest
     /// discrete one feeds the prediction.
     pub gpus: Vec<gpu::Gpu>,
+    /// Battery, low-power mode and throttling around the benchmark: the
+    /// conditions the measurements were taken under.
+    pub power: power::Power,
     pub ram: ram::RamResult,
     pub compute: compute::ComputeResult,
     pub disk: Option<disk::DiskResult>,
@@ -86,11 +89,19 @@ fn select_backend(has_discrete_card: bool, unified: bool, gpus: &[gpu::Gpu]) -> 
 }
 
 pub fn probe() -> Machine {
-    let mem = memory::probe();
+    let mut mem = memory::probe();
     let cpu = cpu::probe();
     let env = env::probe(mem.total);
     let storage = storage::probe();
     let gpus = gpu::probe();
+    if mem.firmware_reserved.is_none() {
+        // Linux cannot read SMBIOS without root, but amdgpu reports an APU's
+        // carve-out. Informational only: `total` already excludes it.
+        let carve: u64 = gpus.iter().map(|g| g.carveout_bytes * g.count as u64).sum();
+        mem.firmware_reserved = (carve > 0).then_some(carve);
+    }
+    let mut power = power::probe();
+    let throttle_before = power::Throttle::sample();
     let p_threads = cpu.p_cores.max(1) as usize;
 
     let mut counts = vec![1usize, 2, p_threads, cpu.physical as usize];
@@ -128,9 +139,11 @@ pub fn probe() -> Machine {
         None => pr.done("not measurable"),
     }
 
-    let reserved = mem.firmware_reserved.unwrap_or(0);
-    let budget_idle = predict::potential_budget(mem.total, env.memory_ceiling, reserved);
-    let budget_now = predict::current_budget(mem.total, mem.available, env.memory_ceiling, reserved);
+    power.throttled = throttle_before.during(power::Throttle::sample());
+
+    // Firmware-reserved memory is not subtracted: `total` never included it.
+    let budget_idle = predict::potential_budget(mem.total, env.memory_ceiling);
+    let budget_now = predict::current_budget(mem.total, mem.available, env.memory_ceiling);
 
     // A card too small to hold anything useful is not worth switching backend
     // for: the runtime will offload a handful of layers at best, and the
@@ -138,7 +151,7 @@ pub fn probe() -> Machine {
     const MIN_DISCRETE_VRAM: u64 = 2 << 30;
     let card = gpus
         .iter()
-        .filter(|g| !g.integrated && g.vram_bytes >= MIN_DISCRETE_VRAM)
+        .filter(|g| !g.integrated && g.vram_bytes >= MIN_DISCRETE_VRAM && g.usable_for_compute())
         .max_by_key(|g| g.vram_bytes);
 
     let backend = select_backend(card.is_some(), mem.unified, &gpus);
@@ -177,6 +190,7 @@ pub fn probe() -> Machine {
         env,
         storage,
         gpus,
+        power,
         ram,
         compute,
         disk,

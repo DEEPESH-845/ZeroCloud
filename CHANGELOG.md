@@ -8,6 +8,12 @@ Entries name the *symptom*, because that is what a user recognises.
 
 ## [Unreleased]
 
+### Changed
+
+- The crates are published as `zerocloud-*` (`zc-tui` was taken on
+  crates.io). The binary is still `zc`, and `rust-version` is now declared as
+  1.88, the version the code has actually needed.
+
 ### Fixed
 
 - **Interrupting `zc check` no longer leaves 512 MiB on your disk.** The disk
@@ -26,9 +32,19 @@ Entries name the *symptom*, because that is what a user recognises.
 
 ### Added
 
+- **`zc check` says when the numbers were taken on battery, in low-power mode,
+  or while the CPU was throttled.** Each distorts a laptop's measurements
+  without changing its hardware, so a slow result now says whether the machine
+  is slow or was measured slowly. Nothing is adjusted; `--json` carries
+  `machine.power` and `zc doctor` lists all three.
+- **Intel Macs list their discrete Radeon, with its VRAM.** It is not used for
+  predictions, and the report says so: Ollama is CPU-only on Intel Macs and
+  LM Studio does not ship for them.
+- **Firmware-reserved memory is reported on Windows and on Linux AMD APUs**,
+  explaining a total below the RAM that was bought.
 - `SECURITY.md`, `CODE_OF_CONDUCT.md`, a pull-request template, and Dependabot.
 - `cargo-deny` in CI: advisories, licences, sources, and a rule asserting
-  `crossterm` stays reachable from `zc-tui` alone.
+  `crossterm` stays reachable from `zerocloud-tui` alone.
 - `scripts/signal_smoke.py` and `crates/zc-model/tests/fuzz.rs`.
 
 ## [0.1.0] — 2026-08-20

@@ -71,10 +71,16 @@ pub fn render_with(r: &Report, color: bool) -> String {
         p,
         &r.cpu.brand,
         &format!(
-            "{}P+{}E   {} total / {} available{}",
+            "{}P+{}E   {} total{} / {} available{}",
             r.cpu.p_cores,
             r.cpu.e_cores,
             human(r.mem.total),
+            // Explains a total below the RAM that was bought. Not counted in
+            // the budget: the OS never had it.
+            match r.mem.firmware_reserved {
+                Some(b) if b > 0 => format!(" (+{} firmware)", human(b)),
+                _ => String::new(),
+            },
             human(r.mem.available),
             if r.mem.unified { "   unified" } else { "" }
         ),
@@ -109,6 +115,8 @@ pub fn render_with(r: &Report, color: bool) -> String {
                 // none of its own, and Windows' "shared system memory"
                 // figure is memory it takes from the CPU, not memory it adds.
                 "integrated (shares system memory)".to_string()
+            } else if !g.usable_for_compute() {
+                format!("{} VRAM   not used by a supported runtime here", human(g.vram_bytes))
             } else {
                 format!(
                     "{} VRAM   ~{:.0} GB/s (looked up, not measured)",
@@ -297,7 +305,14 @@ pub fn render_with(r: &Report, color: bool) -> String {
     // Hazards and the environment warning are prose written for a human, and
     // neither has a bounded length -- a WSL memory-ceiling warning names a
     // path. Wrapped, with the continuation indented under the marker.
-    for h in r.storage.hazards.iter().map(|h| h.to_string()).chain(r.env.warning.clone()) {
+    for h in r
+        .storage
+        .hazards
+        .iter()
+        .map(|h| h.to_string())
+        .chain(r.env.warning.clone())
+        .chain(r.power.warnings())
+    {
         push(p, "");
         for (i, l) in crate::wrap(&h, crate::TABLE_WIDTH - 5, 0).iter().enumerate() {
             push(p, &format!("{}{l}", if i == 0 { "  !  " } else { "     " }));

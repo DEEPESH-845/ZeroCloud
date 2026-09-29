@@ -116,10 +116,10 @@ pub struct Prediction {
 /// Starts from *available* (not total, not free) and holds back a reserve so
 /// the machine stays usable — a user who cannot open a browser while the model
 /// runs will uninstall regardless of how fast it was.
-pub fn current_budget(total: u64, available: u64, ceiling: Option<u64>, reserved: u64) -> u64 {
+pub fn current_budget(total: u64, available: u64, ceiling: Option<u64>) -> u64 {
     let base = ceiling.map_or(available, |c| available.min(c));
     let reserve = (total / 10).max(1 << 30); // 10% of RAM, at least 1 GiB
-    base.saturating_sub(reserve).saturating_sub(reserved)
+    base.saturating_sub(reserve)
 }
 
 /// Memory available on a machine that is otherwise idle.
@@ -133,7 +133,7 @@ pub fn current_budget(total: u64, available: u64, ceiling: Option<u64>, reserved
 /// The floor covers the OS plus a shell and a terminal. It is deliberately
 /// generous: predicting a model fits and having it OOM is far worse than
 /// predicting it does not and being pleasantly surprised.
-pub fn potential_budget(total: u64, ceiling: Option<u64>, reserved: u64) -> u64 {
+pub fn potential_budget(total: u64, ceiling: Option<u64>) -> u64 {
     let base = ceiling.map_or(total, |c| total.min(c));
     let os_floor = if cfg!(target_os = "macos") {
         // macOS wires down noticeably more, and compression makes reclaim
@@ -144,7 +144,7 @@ pub fn potential_budget(total: u64, ceiling: Option<u64>, reserved: u64) -> u64 
     } else {
         (base / 6).max(3 * (1 << 29)) // 1.5 GiB
     };
-    base.saturating_sub(os_floor).saturating_sub(reserved)
+    base.saturating_sub(os_floor)
 }
 
 /// Fraction of peak read bandwidth a real inference loop achieves.
