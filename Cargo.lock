@@ -324,31 +324,31 @@ dependencies = [
 ]
 
 [[package]]
-name = "zc-bench"
+name = "zerocloud-bench"
 version = "0.1.0"
 dependencies = [
  "libc",
 ]
 
 [[package]]
-name = "zc-cli"
+name = "zerocloud-cli"
 version = "0.1.0"
 dependencies = [
  "libc",
- "zc-bench",
- "zc-model",
- "zc-probe",
- "zc-report",
- "zc-runtime",
- "zc-tui",
+ "zerocloud-bench",
+ "zerocloud-model",
+ "zerocloud-probe",
+ "zerocloud-report",
+ "zerocloud-runtime",
+ "zerocloud-tui",
 ]
 
 [[package]]
-name = "zc-model"
+name = "zerocloud-model"
 version = "0.1.0"
 
 [[package]]
-name = "zc-probe"
+name = "zerocloud-probe"
 version = "0.1.0"
 dependencies = [
  "libc",
@@ -356,28 +356,28 @@ dependencies = [
 ]
 
 [[package]]
-name = "zc-report"
+name = "zerocloud-report"
 version = "0.1.0"
 dependencies = [
- "zc-bench",
- "zc-model",
- "zc-probe",
+ "zerocloud-bench",
+ "zerocloud-model",
+ "zerocloud-probe",
 ]
 
 [[package]]
-name = "zc-runtime"
+name = "zerocloud-runtime"
 version = "0.1.0"
 dependencies = [
- "zc-model",
+ "zerocloud-model",
 ]
 
 [[package]]
-name = "zc-tui"
+name = "zerocloud-tui"
 version = "0.1.0"
 dependencies = [
  "crossterm",
- "zc-bench",
- "zc-model",
- "zc-probe",
- "zc-report",
+ "zerocloud-bench",
+ "zerocloud-model",
+ "zerocloud-probe",
+ "zerocloud-report",
 ]

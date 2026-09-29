@@ -75,10 +75,10 @@ $ zc check --top 8
 |---|---|
 | **macOS / Linux** | `curl -fsSL https://raw.githubusercontent.com/DEEPESH-845/ZeroCloud/main/install.sh \| sh` |
 | **Windows** | Download `zc-x86_64-pc-windows-msvc.exe` from [Releases](https://github.com/DEEPESH-845/ZeroCloud/releases/latest), rename to `zc.exe` |
-| **Rust** | `cargo install --git https://github.com/DEEPESH-845/ZeroCloud zc-cli` |
+| **Rust** | `cargo install --git https://github.com/DEEPESH-845/ZeroCloud zerocloud-cli` |
 
 <details>
-<summary>From source (Rust 1.85+, edition 2024)</summary>
+<summary>From source (Rust 1.88+)</summary>
 
 ```sh
 git clone https://github.com/DEEPESH-845/ZeroCloud && cd ZeroCloud
@@ -90,10 +90,9 @@ cargo build --release   # ./target/release/zc
 The binary is under 5 MB, statically linked on Linux (musl), and has no runtime
 dependencies. Nothing to install alongside it.
 
-`zc-cli` is not on crates.io yet, so the Rust route builds from the repository.
-The crates are packaged and verified for publishing — that is what
-`cargo package -p zc-model` proves in `./check.sh` — but nothing has been
-pushed to the registry.
+The crates are not on crates.io yet, so the Rust route builds from the
+repository. They publish as `zerocloud-*` (`zc-tui` was taken); the binary is
+still `zc`.
 
 ---
 

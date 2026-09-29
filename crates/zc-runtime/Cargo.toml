@@ -1,13 +1,19 @@
 [package]
-name = "zc-runtime"
+name = "zerocloud-runtime"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 description = "Talks to local LLM runtimes (Ollama, llama.cpp, LM Studio) to measure real decode and prefill rates."
 repository.workspace = true
 
+# Published as zerocloud-runtime (zc-tui was taken on crates.io); the Rust
+# crate keeps its original name so no `use` line or path had to change.
+[lib]
+name = "zc_runtime"
+
 [dependencies]
-zc-model = { path = "../zc-model", version = "0.1.0" }
+zerocloud-model = { path = "../zc-model", version = "0.1.0" }
 
 [dev-dependencies]
-zc-model = { path = "../zc-model", version = "0.1.0" }
+zerocloud-model = { path = "../zc-model", version = "0.1.0" }

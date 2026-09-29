@@ -32,7 +32,7 @@ wildcards = "deny"
 # promise is worth more as a build failure than as a sentence in a document.
 [[bans.deny]]
 name = "crossterm"
-wrappers = ["zc-tui"]
+wrappers = ["zerocloud-tui"]
 
 [sources]
 unknown-registry = "deny"

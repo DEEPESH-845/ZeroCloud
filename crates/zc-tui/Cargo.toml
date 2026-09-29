@@ -1,14 +1,20 @@
 [package]
-name = "zc-tui"
+name = "zerocloud-tui"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 description = "The interactive terminal UI for `zc check`."
 repository.workspace = true
 
+# Published as zerocloud-tui (zc-tui was taken on crates.io); the Rust
+# crate keeps its original name so no `use` line or path had to change.
+[lib]
+name = "zc_tui"
+
 [dependencies]
-zc-report = { path = "../zc-report", version = "0.1.0" }
-zc-model = { path = "../zc-model", version = "0.1.0" }
+zerocloud-report = { path = "../zc-report", version = "0.1.0" }
+zerocloud-model = { path = "../zc-model", version = "0.1.0" }
 
 # The only crate in this workspace permitted to name crossterm. It buys raw
 # mode, key-event parsing and resize handling on Windows -- the one layer
@@ -18,5 +24,5 @@ zc-model = { path = "../zc-model", version = "0.1.0" }
 crossterm.workspace = true
 
 [dev-dependencies]
-zc-probe = { path = "../zc-probe", version = "0.1.0" }
-zc-bench = { path = "../zc-bench", version = "0.1.0" }
+zerocloud-probe = { path = "../zc-probe", version = "0.1.0" }
+zerocloud-bench = { path = "../zc-bench", version = "0.1.0" }

@@ -1,7 +1,8 @@
 [package]
-name = "zc-cli"
+name = "zerocloud-cli"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 description = "What can this laptop actually run, and how fast? Measures your machine and predicts local LLM performance."
 repository.workspace = true
@@ -14,12 +15,12 @@ name = "zc"
 path = "src/main.rs"
 
 [dependencies]
-zc-probe = { path = "../zc-probe", version = "0.1.0" }
-zc-bench = { path = "../zc-bench", version = "0.1.0" }
-zc-model = { path = "../zc-model", version = "0.1.0" }
-zc-runtime = { path = "../zc-runtime", version = "0.1.0" }
-zc-report = { path = "../zc-report", version = "0.1.0" }
-zc-tui = { path = "../zc-tui", version = "0.1.0" }
+zerocloud-probe = { path = "../zc-probe", version = "0.1.0" }
+zerocloud-bench = { path = "../zc-bench", version = "0.1.0" }
+zerocloud-model = { path = "../zc-model", version = "0.1.0" }
+zerocloud-runtime = { path = "../zc-runtime", version = "0.1.0" }
+zerocloud-report = { path = "../zc-report", version = "0.1.0" }
+zerocloud-tui = { path = "../zc-tui", version = "0.1.0" }
 
 # Only for restoring the default SIGPIPE disposition. Rust's runtime ignores
 # SIGPIPE so that writes return EPIPE, which `println!` then panics on -- so

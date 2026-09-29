@@ -85,7 +85,7 @@ Before tagging, confirm locally:
 ```sh
 ./check.sh                                   # tests, clippy, cross-compile,
                                              # contracts, tui, installer
-cargo package -p zc-model                    # must say Packaged AND Finished
+cargo publish --workspace --dry-run          # all seven package and verify
 grep -c version crates/*/Cargo.toml          # every crate carries one
 ```
 
@@ -206,49 +206,34 @@ few hundred stars.
 
 ## crates.io
 
-`cargo install zc-cli` works. It did not until 2026-08-20, and the block was a
-directory layout rather than a code problem:
+Nothing is published yet. `cargo install --git … zerocloud-cli` is the Rust
+route until it is.
 
-```
-$ cargo package -p zc-model
-error: failed to verify package tarball
-  cannot read ../../data/models: No such file or directory
-```
+**The crates publish as `zerocloud-*`, not `zc-*`.** `zc-tui` was registered by
+an unrelated project on 2026-08-24, so the whole set was renamed rather than
+mixing prefixes. Only the package names changed: each crate keeps its Rust
+name through `[lib] name = "zc_*"`, and the directories stay `crates/zc-*`,
+because the v0.1.0 binary's `zc share` builds its pull-request URL from
+`crates/zc-model/data/calibration/community/` and moving that path would break
+every installed copy.
 
 `build.rs` embeds `data/models/*.json` and the calibration dataset at compile
-time, and both lived *above* the package root — a published `.crate` contains
-only its own directory, so the build script found nothing. `data/` now lives at
-`crates/zc-model/data/`, which is inside the package and therefore inside the
-tarball.
+time, so they live inside the package at `crates/zc-model/data/` — a published
+`.crate` contains only its own directory. `zc share` generates the
+pull-request URL, so the depth costs contributors nothing.
 
-The objection on record was that moving the contribution surface out of the
-repo root buries it right before asking for contributions. That objection
-predates `zc share`, which now *generates* the pull-request URL — so no
-contributor types the path, and the depth costs nothing.
-
-**Publish bottom-up.** `cargo package` for a crate resolves its dependencies
-against the registry, so a dependent cannot even be packaged until everything
-it needs is already published. That is ordinary sequencing, not a fault:
+**One command publishes all seven, in dependency order** (Cargo 1.90+ resolves
+the workspace's own crates against each other while packaging):
 
 ```sh
-cargo publish -p zc-bench
-cargo publish -p zc-probe
-cargo publish -p zc-model     # carries data/ -- verify this one first
-cargo publish -p zc-report
-cargo publish -p zc-runtime
-cargo publish -p zc-tui
-cargo publish -p zc-cli       # the binary; this is what `cargo install` gets
-```
-
-Before the first publish, confirm the one that used to fail:
-
-```sh
-cargo package -p zc-model     # must say "Packaged" AND "Finished"
+cargo login                                  # token from crates.io/settings/tokens
+cargo publish --workspace --dry-run          # all seven must say Packaged AND Verifying
+cargo publish --workspace
 ```
 
 Versions are inherited from `[workspace.package]`, so a release bumps one
-number. Every crate carries a `description` — crates.io rejects a publish
-without one, and all seven were missing it until the same day.
+number. `rust-version` there is the real floor (let-chains and
+`slice::as_chunks` need 1.88), checked by building on 1.87 and 1.88.
 
 Publishing is **not** reversible: a version can be yanked but never replaced.
 Publish only from a tagged commit that CI has already passed.

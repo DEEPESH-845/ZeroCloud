@@ -1,7 +1,13 @@
 [package]
-name = "zc-model"
+name = "zerocloud-model"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 description = "Analytic prediction of local LLM decode speed, time-to-first-token and maximum context from measured hardware."
 repository.workspace = true
+
+# Published as zerocloud-model (zc-tui was taken on crates.io); the Rust
+# crate keeps its original name so no `use` line or path had to change.
+[lib]
+name = "zc_model"

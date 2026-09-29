@@ -1,10 +1,16 @@
 [package]
-name = "zc-bench"
+name = "zerocloud-bench"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 description = "Micro-benchmarks that measure RAM bandwidth, compute and uncached disk on the machine actually in front of you."
 repository.workspace = true
+
+# Published as zerocloud-bench (zc-tui was taken on crates.io); the Rust
+# crate keeps its original name so no `use` line or path had to change.
+[lib]
+name = "zc_bench"
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true

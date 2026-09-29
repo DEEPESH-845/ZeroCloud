@@ -1,10 +1,16 @@
 [package]
-name = "zc-probe"
+name = "zerocloud-probe"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 description = "Hardware detection for local LLM capacity planning: cores, memory, GPUs, storage and virtualisation."
 repository.workspace = true
+
+# Published as zerocloud-probe (zc-tui was taken on crates.io); the Rust
+# crate keeps its original name so no `use` line or path had to change.
+[lib]
+name = "zc_probe"
 
 [dependencies]
 # Only pulled in on Unix. Cargo evaluates these cfg predicates at build time,

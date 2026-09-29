@@ -161,7 +161,7 @@ max_ctx  = (usable − weights − compute_buffers) / kv_bytes_per_token`}</pre>
               <CopyButton text={INSTALL} />
             </div>
             <p className="alt"><MagneticButton className="pill" href={`${GH}/releases/latest`}>Windows .exe from Releases</MagneticButton><MagneticButton className="pill" href={`${GH}#install`}>Build from source</MagneticButton></p>
-            <p className="facts"><span>cargo install --git {GH} zc-cli</span></p>
+            <p className="facts"><span>cargo install --git {GH} zerocloud-cli</span></p>
           </div>
         </div>
       </section>

@@ -48,7 +48,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - run: cargo test -p zc-model --quiet
+      - run: cargo test -p zerocloud-model --quiet
 
   ingest:
     runs-on: ubuntu-latest
@@ -72,7 +72,7 @@ jobs:
       # file parses, every quantisation is plausible for its format, and the
       # hand-computed KV figures still hold.
       - name: Validate the result
-        run: cargo test -p zc-model --quiet
+        run: cargo test -p zerocloud-model --quiet
 
       - name: Open a pull request
         if: github.event_name != 'pull_request'
