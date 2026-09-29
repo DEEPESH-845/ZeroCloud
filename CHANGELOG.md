@@ -32,6 +32,12 @@ Entries name the *symptom*, because that is what a user recognises.
 
 ### Added
 
+- **`zc serve`: the same answers over HTTP, and as MCP tools for AI agents.**
+  `GET /v1/check` and `/v1/plan` on `127.0.0.1` return exactly what `--json`
+  prints; `zc serve --mcp` exposes `check` and `plan` over stdio and speaks
+  every MCP revision from 2024-11-05 to the stateless 2026-07-28. Loopback
+  only, GET only, and a non-loopback `Host` is refused against DNS rebinding.
+- `zc plan --json`.
 - **`zc check` says when the numbers were taken on battery, in low-power mode,
   or while the CPU was throttled.** Each distorts a laptop's measurements
   without changing its hardware, so a slow result now says whether the machine

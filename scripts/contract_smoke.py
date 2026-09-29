@@ -139,11 +139,96 @@ def main():
     flat = " ".join(out.split())
     check("the calibration dataset is embedded", "shipped in this binary" in flat)
 
+    serve_http()
+    serve_mcp()
+
     if FAILURES:
         print(f"\ncontract_smoke: {len(FAILURES)} failure(s): {', '.join(FAILURES)}")
         return 1
     print("contract_smoke: ok")
     return 0
+
+
+def serve_http():
+    """`zc serve` on an ephemeral port: the routes, and the two refusals that
+    are its security model."""
+    import http.client
+    import re
+    import time
+
+    p = subprocess.Popen(
+        [os.path.abspath(ZC), "serve", "--port", "0"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        port = None
+        deadline = time.time() + 600
+        while time.time() < deadline and p.poll() is None:
+            line = p.stderr.readline()
+            m = re.search(r"127\.0\.0\.1:(\d+)", line)
+            if m:
+                port = int(m.group(1))
+                break
+        check("serve announces its port on stderr", port is not None)
+        if port is None:
+            return
+
+        def get(path, method="GET", host=None):
+            c = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
+            c.putrequest(method, path, skip_host=host is not None)
+            if host is not None:
+                c.putheader("Host", host)
+            c.endheaders()
+            r = c.getresponse()
+            body = r.read().decode()
+            c.close()
+            return r.status, body
+
+        status, body = get("/v1/check?top=2")
+        doc = json.loads(body) if status == 200 else {}
+        check("serve /v1/check is the check --json document", len(doc.get("models", [])) == 2, f"status={status}")
+        status, body = get("/v1/plan?model=qwen3-0.6b")
+        check("serve /v1/plan returns a plan", status == 200 and json.loads(body).get("model") == "qwen3-0.6b", f"status={status}")
+        check("serve refuses an unknown parameter", get("/v1/check?al_quants=1")[0] == 400)
+        check("serve refuses a rebound Host", get("/health", host="evil.example")[0] == 403)
+        check("serve refuses anything but GET", get("/v1/check", method="POST")[0] == 405)
+    finally:
+        p.kill()
+        out, _ = p.communicate()
+    check("serve writes nothing to stdout", out == "", repr(out[:40]))
+
+
+def serve_mcp():
+    """`zc serve --mcp`: a handshake, a tool list and one real tool call."""
+    msgs = [
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+         "params": {"protocolVersion": "2025-11-25", "capabilities": {},
+                    "clientInfo": {"name": "contract_smoke", "version": "1"}}},
+        {"jsonrpc": "2.0", "method": "notifications/initialized"},
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+        {"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+         "params": {"name": "check", "arguments": {"top": 1}}},
+    ]
+    p = subprocess.run(
+        [os.path.abspath(ZC), "serve", "--mcp"],
+        input="".join(json.dumps(m) + "\n" for m in msgs),
+        capture_output=True, text=True, timeout=600,
+    )
+    try:
+        replies = {r["id"]: r for r in map(json.loads, p.stdout.splitlines())}
+    except ValueError:
+        replies = {}
+    check("mcp answers every request and no notification", sorted(replies) == [1, 2, 3], repr(p.stdout[:80]))
+    if sorted(replies) != [1, 2, 3]:
+        return
+    check("mcp negotiates the requested version", replies[1]["result"]["protocolVersion"] == "2025-11-25")
+    tools = [t["name"] for t in replies[2]["result"]["tools"]]
+    check("mcp lists check and plan", tools == ["check", "plan"], repr(tools))
+    res = replies[3]["result"]
+    doc = json.loads(res["content"][0]["text"]) if not res.get("isError") else {}
+    check("mcp check returns the check --json document", len(doc.get("models", [])) == 1)
 
 
 if __name__ == "__main__":

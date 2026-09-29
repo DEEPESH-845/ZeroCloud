@@ -111,7 +111,17 @@ fn hex4(src: &str, i: usize) -> Option<u32> {
 /// `Ã©`. Qwen and other models carry non-ASCII GGUF metadata, so this was
 /// reachable in ordinary use.
 pub fn string(src: &str, key: &str) -> Option<String> {
-    let start = find_key(src, key)?;
+    decode_at(src, find_key(src, key)?)
+}
+
+/// A raw string literal (`"a\nb"`, quotes included) decoded, as returned by
+/// [`field`]. `None` when `raw` is not a string.
+pub fn unquote(raw: &str) -> Option<String> {
+    decode_at(raw.trim(), 0)
+}
+
+/// Decode the string literal whose opening quote is at `start`.
+fn decode_at(src: &str, start: usize) -> Option<String> {
     let b = src.as_bytes();
     if b.get(start) != Some(&b'"') {
         return None;
@@ -184,6 +194,109 @@ pub fn string(src: &str, key: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// The members of the object `obj`, at its own depth only, as (decoded key,
+/// raw value text) in document order.
+///
+/// The scanner above resolves a key wherever it first appears, which is fine
+/// for responses whose shape we know. A JSON-RPC request from an arbitrary MCP
+/// client is not one: `params` may carry `_meta` or put `arguments` before
+/// `name`, and a nested key must never answer for a top-level one. Stops at
+/// the first malformed member rather than guessing past it.
+pub fn members(obj: &str) -> Vec<(String, &str)> {
+    let b = obj.as_bytes();
+    let mut out = Vec::new();
+    let mut i = skip_ws(b, 0);
+    if b.get(i) != Some(&b'{') {
+        return out;
+    }
+    i += 1;
+    loop {
+        i = skip_ws(b, i);
+        if b.get(i) != Some(&b'"') {
+            return out;
+        }
+        let Some(key_end) = string_end(b, i) else { return out };
+        let Some(key) = decode_at(obj, i) else { return out };
+        i = skip_ws(b, key_end);
+        if b.get(i) != Some(&b':') {
+            return out;
+        }
+        i = skip_ws(b, i + 1);
+        let end = value_end(b, i);
+        let raw = obj[i..end].trim_end();
+        if raw.is_empty() {
+            return out;
+        }
+        out.push((key, raw));
+        i = skip_ws(b, end);
+        if b.get(i) != Some(&b',') {
+            return out;
+        }
+        i += 1;
+    }
+}
+
+/// Raw value text of `key` among `obj`'s own members. See [`members`].
+pub fn field<'a>(obj: &'a str, key: &str) -> Option<&'a str> {
+    members(obj).into_iter().find(|(k, _)| k == key).map(|(_, v)| v)
+}
+
+fn skip_ws(b: &[u8], mut i: usize) -> usize {
+    while b.get(i).is_some_and(|c| c.is_ascii_whitespace()) {
+        i += 1;
+    }
+    i
+}
+
+/// Index just past the string literal opening at `i`, or `None` if it never
+/// closes.
+fn string_end(b: &[u8], i: usize) -> Option<usize> {
+    let mut j = i + 1;
+    while j < b.len() {
+        match b[j] {
+            b'\\' => j += 2,
+            b'"' => return Some(j + 1),
+            _ => j += 1,
+        }
+    }
+    None
+}
+
+/// Index just past the value starting at `i`: the matching bracket for a
+/// container, the closing quote for a string, else the next `,` or closer at
+/// this depth. Every index returned sits on an ASCII byte or the end, so it is
+/// always a valid `str` boundary.
+fn value_end(b: &[u8], i: usize) -> usize {
+    let mut depth = 0usize;
+    let mut j = i;
+    while j < b.len() {
+        match b[j] {
+            b'"' => match string_end(b, j) {
+                Some(e) if depth == 0 => return e,
+                Some(e) => {
+                    j = e;
+                    continue;
+                }
+                None => return b.len(),
+            },
+            b'{' | b'[' => depth += 1,
+            b'}' | b']' => {
+                if depth == 0 {
+                    return j;
+                }
+                depth -= 1;
+                if depth == 0 {
+                    return j + 1;
+                }
+            }
+            b',' if depth == 0 => return j,
+            _ => {}
+        }
+        j += 1;
+    }
+    b.len()
 }
 
 /// Slices of each object inside the array at `"<key>"`.
@@ -453,5 +566,36 @@ mod tests {
     fn missing_keys_are_none() {
         assert_eq!(number(GEN, "nope"), None);
         assert_eq!(string(GEN, "nope"), None);
+    }
+
+    /// The reason `members` exists. A JSON-RPC request may put `arguments`
+    /// before `name` and carry `_meta` anywhere, and the scanner above would
+    /// answer `name` with whatever came first at any depth.
+    #[test]
+    fn a_nested_key_never_answers_for_a_top_level_one() {
+        let req = r#"{"jsonrpc":"2.0","params":{"arguments":{"name":"inner","id":9},
+            "_meta":{"method":"x"},"name":"check"},"id":"a,b}","method":"tools/call"}"#;
+        assert_eq!(field(req, "id"), Some(r#""a,b}""#));
+        assert_eq!(field(req, "method").and_then(unquote).as_deref(), Some("tools/call"));
+        let params = field(req, "params").unwrap();
+        assert_eq!(field(params, "name").and_then(unquote).as_deref(), Some("check"));
+        assert_eq!(field(field(params, "arguments").unwrap(), "id"), Some("9"));
+        // The scanner, for contrast, finds the nested one.
+        assert_eq!(string(req, "name").as_deref(), Some("inner"));
+    }
+
+    #[test]
+    fn members_keep_raw_values_and_stop_at_garbage() {
+        let m = members(r#" { "a" : [1, {"b": "]"}] , "c":true, "d": -1.5e3 } "#);
+        let keys: Vec<&str> = m.iter().map(|(k, _)| k.as_str()).collect();
+        assert_eq!(keys, ["a", "c", "d"]);
+        assert_eq!(m[0].1, r#"[1, {"b": "]"}]"#);
+        assert_eq!(m[2].1, "-1.5e3");
+        // Truncated mid-member: what parsed cleanly is kept, nothing invented.
+        assert_eq!(members(r#"{"a":1,"b":"#).len(), 1);
+        assert!(members("[1,2]").is_empty());
+        assert!(members("").is_empty());
+        assert_eq!(unquote(r#""tab\tand \u00e9""#).as_deref(), Some("tab\tand é"));
+        assert_eq!(unquote("12"), None);
     }
 }

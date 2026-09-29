@@ -1,10 +1,13 @@
+mod api;
 mod check;
 mod doctor;
 mod fit_cmd;
 mod gate_cmd;
 mod hf;
 mod machine;
+mod mcp;
 mod plan_cmd;
+mod serve;
 mod share;
 mod verify;
 
@@ -19,6 +22,8 @@ EXAMPLES
     zc check Qwen/Qwen3-4B  will a model outside the catalog fit? (fetches)
     zc plan qwen3-8b --context 32K
                           what would it take to run this well?
+    zc serve              the same answers over HTTP on 127.0.0.1
+    zc serve --mcp        ...or as MCP tools for an AI agent (stdio)
     zc doctor             a paste-ready report for a bug
 
 USAGE
@@ -27,7 +32,10 @@ USAGE
     zc check <hf-repo-id> will one model that is not in the catalog fit?
                           the only command that touches the network
     zc plan MODEL [--context N] [--quant Q] [--kv f16|q8|q4] [--target-tps T]
+            [--json]
                           how much memory and bandwidth would this model need?
+    zc serve [--port N | --mcp]
+                          answer check and plan for other programs, locally
     zc verify [MODEL] [--runtime NAME]
                           run a real model and compare against the prediction
     zc fit                fitted coefficients, and the evidence behind them
@@ -41,7 +49,8 @@ Both commands benchmark the hardware first: ~2s on a fast laptop, longer
 where the disk is slow. Nothing leaves this machine and no connection is
 opened, with one exception you have to ask for by name: `zc check
 <hf-repo-id>` reads that repo's public metadata from huggingface.co, and
-prints each URL before fetching it. `zc verify` writes only to
+prints each URL before fetching it. `zc serve` listens on 127.0.0.1 only and
+still opens no outbound connection. `zc verify` writes only to
 crates/zc-model/data/calibration/local.jsonl.
 
 zc check
@@ -111,6 +120,29 @@ zc plan MODEL [--context N] [--quant Q] [--kv f16|q8|q4] [--target-tps T]
                    not a GPU model name: a name is a lookup, and a bandwidth
                    is checkable against a spec sheet.
 
+zc serve [--port N | --mcp]
+    PRECONDITIONS  none. Port 8765 by default; --port 0 picks a free one.
+    SIDE EFFECTS   benchmarks this machine once -- at start-up over HTTP, on
+                   the first tool call over MCP -- and answers every request
+                   from that one measurement until it exits. Binds 127.0.0.1
+                   only; a request whose Host is not a loopback name is
+                   refused (DNS rebinding), and no CORS header is sent.
+    EXIT CODES     1 if the port cannot be bound; otherwise runs until stopped.
+    AGENT USAGE    HTTP, GET only, JSON bodies, errors as {\"error\": \"...\"}:
+                   /v1/check  ?model= &top= &all_quants= &kv=
+                              the `zc check --json` document; model narrows
+                              to ids containing it (404 if none do)
+                   /v1/plan   ?model= &context= &quant= &kv= &target_tps=
+                              the `zc plan --json` document
+                   /health    {\"ok\": true, \"version\": ...}
+                   Unknown parameters are 400, like unknown flags.
+                   --mcp speaks Model Context Protocol over stdio (revisions
+                   2024-11-05 through 2026-07-28) with two tools, `check` and
+                   `plan`, taking the same parameters and returning the same
+                   JSON. For a client config: {\"command\": \"zc\",
+                   \"args\": [\"serve\", \"--mcp\"]}.
+                   The listening address goes to stderr, stdout stays empty.
+
 zc doctor
     PRECONDITIONS  none. Same probe and benchmark as `zc check`.
     SIDE EFFECTS   same as `zc check`.
@@ -168,10 +200,6 @@ fn main() {
         },
         None => zc_model::KvPrecision::DEFAULT,
     };
-    // Default cut. The catalog is large enough now that printing all of it
-    // buries the models a constrained machine can actually run under the ones
-    // it cannot.
-    const DEFAULT_TOP: usize = 20;
     // `--all` means both: every quantisation, and no row limit.
     let show_all = take_flag(&mut args, "--all");
     let top_arg = take_value(&mut args, "--top");
@@ -184,7 +212,7 @@ fn main() {
             }
         },
         None if show_all => None,
-        None => Some(DEFAULT_TOP),
+        None => Some(check::DEFAULT_TOP),
     };
     // `share` reads a record file rather than measuring, so both of its flags
     // are stripped here with the other globals and never reach the probe.
@@ -195,6 +223,8 @@ fn main() {
     let target_tps = take_value(&mut args, "--target-tps");
     let force_tui = take_flag(&mut args, "--tui");
     let no_tui = take_flag(&mut args, "--no-tui");
+    let port = take_value(&mut args, "--port");
+    let mcp = take_flag(&mut args, "--mcp");
     let cmd = args.first().map(String::as_str).unwrap_or("check");
 
     if matches!(cmd, "-h" | "--help" | "help") {
@@ -229,6 +259,8 @@ fn main() {
         ("--target-tps", target_tps.is_some()),
         ("--tui", force_tui),
         ("--no-tui", no_tui),
+        ("--port", port.is_some()),
+        ("--mcp", mcp),
     ];
     for (flag, present) in supplied {
         if present && !accepts(cmd, flag) {
@@ -246,6 +278,35 @@ fn main() {
     }
     if cmd == "share" {
         std::process::exit(share::run(record.as_deref(), print_only));
+    }
+    if cmd == "serve" {
+        let fit = zc_model::Fit::from_text(&fit_cmd::read_text(&fit_cmd::sources()));
+        if mcp {
+            if port.is_some() {
+                eprintln!("--mcp speaks over stdio and takes no --port");
+                std::process::exit(2);
+            }
+            std::process::exit(mcp::run(&fit));
+        }
+        let port = match port.as_deref().map(str::parse::<u16>) {
+            None => serve::DEFAULT_PORT,
+            Some(Ok(p)) => p,
+            Some(Err(_)) => {
+                eprintln!("--port wants a number from 0 to 65535, got '{}'", port.unwrap_or_default());
+                std::process::exit(2);
+            }
+        };
+        // Bind before benchmarking: a port already in use should cost the
+        // user nothing but the message.
+        let listener = match serve::bind(port) {
+            Ok(l) => l,
+            Err(e) => {
+                eprintln!("cannot listen on 127.0.0.1:{port}: {e}");
+                std::process::exit(1);
+            }
+        };
+        let m = machine::probe();
+        std::process::exit(serve::run(listener, &m, &fit));
     }
     if !matches!(cmd, "check" | "verify" | "doctor" | "plan") {
         match did_you_mean(cmd) {
@@ -337,7 +398,7 @@ fn main() {
         None if cmd == "doctor" => doctor::run(&m, &fit, kv),
         None if cmd == "plan" => {
             let (model, ctx, tps) = plan_args.expect("plan args parsed above");
-            plan_cmd::run(&m, &fit, kv, &model, ctx, quant.as_deref(), tps)
+            plan_cmd::run(&m, &fit, kv, &model, ctx, quant.as_deref(), tps, as_json)
         }
         None if hf_repo.is_some() => {
             if as_json {
@@ -358,7 +419,7 @@ fn main() {
 /// would be absurd. The distance cap is the point: suggesting `share` for
 /// `xyzzy` is worse than saying nothing at all.
 fn did_you_mean(input: &str) -> Option<&'static str> {
-    const CMDS: &[&str] = &["check", "verify", "fit", "gate", "share", "doctor", "plan"];
+    const CMDS: &[&str] = &["check", "verify", "fit", "gate", "share", "doctor", "plan", "serve"];
     CMDS.iter()
         .map(|c| (*c, distance(input, c)))
         .filter(|(c, d)| *d <= 2 && *d < c.len())
@@ -394,7 +455,9 @@ fn accepts(cmd: &str, flag: &str) -> bool {
         "verify" => &["--runtime", "--kv"],
         "doctor" => &["--kv"],
         "share" => &["--record", "--print"],
-        "plan" => &["--context", "--quant", "--kv", "--target-tps"],
+        "plan" => &["--context", "--quant", "--kv", "--target-tps", "--json"],
+        // Parameters arrive per request; only the transport is chosen here.
+        "serve" => &["--port", "--mcp"],
         // `fit` and `gate` read the calibration file and report it. Neither
         // predicts anything, so no prediction flag applies.
         _ => &[],
@@ -459,6 +522,9 @@ mod tests {
             ("doctor", "--kv"),
             ("share", "--record"),
             ("share", "--print"),
+            ("plan", "--json"),
+            ("serve", "--port"),
+            ("serve", "--mcp"),
         ] {
             assert!(super::accepts(cmd, flag), "{cmd} should accept {flag}");
         }
@@ -474,6 +540,9 @@ mod tests {
             ("check", "--runtime"),
             ("check", "--print"),
             ("verify", "--top"),
+            ("serve", "--json"),
+            ("serve", "--kv"),
+            ("check", "--mcp"),
         ] {
             assert!(!super::accepts(cmd, flag), "{cmd} must refuse {flag}");
         }

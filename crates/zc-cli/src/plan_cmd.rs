@@ -73,7 +73,32 @@ fn resolve<'a>(specs: &'a [zc_model::ModelSpec], want: &str) -> Result<&'a zc_mo
     }
 }
 
-pub fn run(
+/// One quantisation's requirement, and what this machine makes of it.
+pub struct PlanRow {
+    pub quant: String,
+    pub weights: u64,
+    pub kv: u64,
+    pub total: u64,
+    /// GB/s needed for the target rate, by inverting the decode model.
+    pub needs_gbs: f64,
+    /// Judged against the requested context, which is the question asked.
+    pub fits: bool,
+    pub decode_tok_s: (f64, f64),
+}
+
+pub struct Plan {
+    pub model_id: String,
+    pub ctx: u32,
+    pub kv: KvPrecision,
+    pub target_tps: f64,
+    pub eta: f64,
+    pub confidence: &'static str,
+    pub rows: Vec<PlanRow>,
+}
+
+/// Compute a plan, or the exit code and message `zc plan` would fail with:
+/// 1 for no such model or quantisation, 2 for a context past training.
+pub fn build(
     m: &Machine,
     fit: &Fit,
     kv: KvPrecision,
@@ -81,61 +106,83 @@ pub fn run(
     ctx: Option<u32>,
     quant_filter: Option<&str>,
     target_tps: Option<f64>,
-) -> i32 {
+) -> Result<Plan, (i32, String)> {
     let specs = catalog::load();
-    let spec = match resolve(&specs, model) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("{e}");
-            return 1;
-        }
-    };
+    let spec = resolve(&specs, model).map_err(|e| (1, e))?;
     let ctx = ctx.unwrap_or(DEFAULT_CTX);
     let tps = target_tps.unwrap_or(DEFAULT_TPS);
 
     // A context past what the model was trained for is not a plan, it is a
     // number. Say so rather than sizing memory for it.
     if let Some(trained) = spec.n_ctx_train.filter(|t| ctx > *t) {
-        eprintln!(
-            "{} was trained for {trained} tokens of context; {ctx} is past that.",
-            spec.id
-        );
-        return 2;
+        return Err((
+            2,
+            format!("{} was trained for {trained} tokens of context; {ctx} is past that.", spec.id),
+        ));
     }
 
     let quants: Vec<&zc_model::Quant> = spec
         .quants
         .iter()
-        .filter(|q| {
-            quant_filter.is_none_or(|f| q.name.eq_ignore_ascii_case(f))
-        })
+        .filter(|q| quant_filter.is_none_or(|f| q.name.eq_ignore_ascii_case(f)))
         .collect();
     if quants.is_empty() {
-        eprintln!(
-            "{} has no quantisation named '{}'. It has: {}",
-            spec.id,
-            quant_filter.unwrap_or(""),
-            spec.quants
-                .iter()
-                .map(|q| q.name.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
-        return 1;
+        return Err((
+            1,
+            format!(
+                "{} has no quantisation named '{}'. It has: {}",
+                spec.id,
+                quant_filter.unwrap_or(""),
+                spec.quants.iter().map(|q| q.name.as_str()).collect::<Vec<_>>().join(", ")
+            ),
+        ));
     }
 
-    let quants_first: &zc_model::Quant = quants[0];
+    let rows = quants
+        .iter()
+        .map(|&q| {
+            let req = predict::requirement(spec, q, ctx, kv, UBATCH);
+            let coef = predict::plan_eta(fit, m.backend, q);
+            let p = predict::predict_with(spec, q, &m.hw, kv, ctx.min(2048), UBATCH, fit);
+            PlanRow {
+                quant: q.name.clone(),
+                weights: req.weights,
+                kv: req.kv,
+                total: req.total,
+                needs_gbs: predict::required_bandwidth_gbs(spec, q, tps, coef.eta),
+                fits: req.total <= m.budget_idle,
+                decode_tok_s: p.decode_tok_s,
+            }
+        })
+        .collect();
+
+    // One coefficient for the footer, from a quantisation the model actually
+    // has -- the family is what selects the bucket, and the footer is about
+    // where the number came from.
+    let shown = predict::plan_eta(fit, m.backend, quants[0]);
+    Ok(Plan {
+        model_id: spec.id.clone(),
+        ctx,
+        kv,
+        target_tps: tps,
+        eta: shown.eta,
+        confidence: shown.confidence.label(),
+        rows,
+    })
+}
+
+pub fn text(m: &Machine, plan: &Plan) -> String {
     let mut o = String::new();
     o.push_str(&format!(
         "== plan ==  {} at {} context, KV {}, target {:.0} tok/s\n\n",
-        spec.id,
-        if ctx >= 1024 {
-            format!("{}K", ctx / 1024)
+        plan.model_id,
+        if plan.ctx >= 1024 {
+            format!("{}K", plan.ctx / 1024)
         } else {
-            ctx.to_string()
+            plan.ctx.to_string()
         },
-        kv.tag().to_uppercase(),
-        tps,
+        plan.kv.tag().to_uppercase(),
+        plan.target_tps,
     ));
     o.push_str(&format!(
         "  this machine   {:.2} GiB budget, {:.0} GB/s measured, {}\n\n",
@@ -147,45 +194,109 @@ pub fn run(
         "  {:<8} {:>8} {:>7} {:>8}  {:>12}   {}\n",
         "quant", "weights", "KV", "total", "needs", "on this machine"
     ));
-
-    for q in quants {
-        let req = predict::requirement(spec, q, ctx, kv, UBATCH);
-        let coef = predict::plan_eta(fit, m.backend, q);
-        let need_bw = predict::required_bandwidth_gbs(spec, q, tps, coef.eta);
-        let p = predict::predict_with(spec, q, &m.hw, kv, ctx.min(2048), UBATCH, fit);
-        // Fit is judged against the requested context, which is the question
-        // asked -- not against whatever context `predict` chose to operate at.
-        let verdict = if req.total <= m.budget_idle {
-            format!("fits, {:.0}-{:.0} t/s", p.decode_tok_s.0, p.decode_tok_s.1)
+    for r in &plan.rows {
+        let verdict = if r.fits {
+            format!("fits, {:.0}-{:.0} t/s", r.decode_tok_s.0, r.decode_tok_s.1)
         } else {
-            format!("over by {:.2} GiB", gib(req.total - m.budget_idle))
+            format!("over by {:.2} GiB", gib(r.total - m.budget_idle))
         };
         o.push_str(&format!(
             "  {:<8} {:>8.2} {:>7.2} {:>8.2}  {:>7.0} GB/s   {}\n",
-            q.name,
-            gib(req.weights),
-            gib(req.kv),
-            gib(req.total),
-            need_bw,
+            r.quant,
+            gib(r.weights),
+            gib(r.kv),
+            gib(r.total),
+            r.needs_gbs,
             verdict,
         ));
     }
-
-    // One coefficient for the footer, from a quantisation the model actually
-    // has -- the family is what selects the bucket, and the footer is about
-    // where the number came from.
-    let shown = predict::plan_eta(fit, m.backend, quants_first);
     o.push_str("\n  GiB is memory, however it is provided -- RAM, VRAM or unified.\n");
     o.push_str(&format!(
         "  'needs' is the bandwidth for {:.0} tok/s at eta {:.3}, {} confidence.\n",
-        tps,
-        shown.eta,
-        shown.confidence.label()
+        plan.target_tps, plan.eta, plan.confidence
     ));
     o.push_str("  Bandwidth is checkable against a spec sheet. A GPU model name\n");
     o.push_str("  would be a lookup, and this tool puts no lookup under a number.\n");
-    print!("{}", zc_report::text::block(&o));
-    0
+    zc_report::text::block(&o)
+}
+
+/// The same plan for a script or an agent. Bytes, not GiB; `decode_tok_s` is
+/// `null` for a quantisation that does not fit, because a speed for a model
+/// that cannot load is not a claim anyone can check.
+pub fn json(m: &Machine, plan: &Plan) -> String {
+    use zc_model::json::escape;
+    let rows: Vec<String> = plan
+        .rows
+        .iter()
+        .map(|r| {
+            format!(
+                "{{\"quant\":\"{}\",\"weights_bytes\":{},\"kv_bytes\":{},\"total_bytes\":{},\
+                 \"needs_gbs\":{},\"fits\":{},\"decode_tok_s\":{}}}",
+                escape(&r.quant),
+                r.weights,
+                r.kv,
+                r.total,
+                num(r.needs_gbs),
+                r.fits,
+                if r.fits {
+                    format!("{{\"low\":{},\"high\":{}}}", num(r.decode_tok_s.0), num(r.decode_tok_s.1))
+                } else {
+                    "null".into()
+                },
+            )
+        })
+        .collect();
+    format!(
+        "{{\"model\":\"{}\",\"context\":{},\"kv_precision\":\"{}\",\"target_tok_s\":{},\
+         \"eta\":{},\"confidence\":\"{}\",\"machine\":{{\"budget_bytes\":{},\"ram_bw_gbs\":{},\
+         \"backend\":\"{}\"}},\"quants\":[{}]}}",
+        escape(&plan.model_id),
+        plan.ctx,
+        plan.kv.tag(),
+        num(plan.target_tps),
+        num(plan.eta),
+        plan.confidence,
+        m.budget_idle,
+        num(m.hw.ram_bw_gbs),
+        zc_report::backend_tag(m.backend),
+        rows.join(","),
+    )
+}
+
+/// JSON has no NaN or Infinity; a non-finite number is `null`.
+fn num(v: f64) -> String {
+    if v.is_finite() {
+        format!("{v:.3}")
+    } else {
+        "null".into()
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn run(
+    m: &Machine,
+    fit: &Fit,
+    kv: KvPrecision,
+    model: &str,
+    ctx: Option<u32>,
+    quant_filter: Option<&str>,
+    target_tps: Option<f64>,
+    as_json: bool,
+) -> i32 {
+    match build(m, fit, kv, model, ctx, quant_filter, target_tps) {
+        Ok(plan) if as_json => {
+            println!("{}", json(m, &plan));
+            0
+        }
+        Ok(plan) => {
+            print!("{}", text(m, &plan));
+            0
+        }
+        Err((code, msg)) => {
+            eprintln!("{msg}");
+            code
+        }
+    }
 }
 
 #[cfg(test)]

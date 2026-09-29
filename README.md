@@ -60,7 +60,7 @@ $ zc check --top 8
 ## Contents
 
 - [Install](#install)
-- [What it does](#what-it-does) — `check`, `plan`, `verify`, and the browsable table
+- [What it does](#what-it-does) — `check`, `plan`, `verify`, the browsable table, and `serve` for agents
 - [Why measure instead of looking up specs](#why-measure-instead-of-looking-up-specs)
 - [Every number is checkable](#every-number-is-checkable) — the house rule, and current accuracy
 - [The one thing this project needs](#the-one-thing-this-project-needs)
@@ -233,6 +233,30 @@ the kind of number this tool exists to not print.
 > This is the only command that opens a connection. It prints each URL first,
 > sends nothing about your machine, and holds no token — so a gated repo like
 > Llama or Gemma answers 401 until you accept its licence on huggingface.co.
+
+### For other programs, and for AI agents
+
+`zc serve` measures the machine once and answers over HTTP on `127.0.0.1`:
+
+```sh
+zc serve &                                   # port 8765; --port 0 picks one
+curl -s 'localhost:8765/v1/check?top=5'      # the `zc check --json` document
+curl -s 'localhost:8765/v1/plan?model=qwen3-8b&context=32K'
+```
+
+`zc serve --mcp` offers the same two answers, `check` and `plan`, as
+[Model Context Protocol](https://modelcontextprotocol.io) tools over stdio, so
+an assistant can ask what your machine can run before suggesting a model. In
+any MCP client's server config:
+
+```json
+{ "zerocloud": { "command": "zc", "args": ["serve", "--mcp"] } }
+```
+
+Both return byte-for-byte what the CLI's `--json` prints, through the same
+functions, so no surface can disagree with another. The first MCP tool call
+runs the benchmark; the server then answers from that measurement until it
+exits.
 
 ---
 
@@ -413,6 +437,11 @@ Two commands touch the network, and neither does it quietly:
   containing it, and asks before handing that URL to your browser. Nothing is
   uploaded by `zc` itself, so there is no token to leak and nothing to trust us
   about that you cannot read on your own terminal first.
+
+`zc serve` listens and never dials out. It binds `127.0.0.1` only, refuses any
+request whose `Host` is not a loopback name (so a web page cannot reach it
+through DNS rebinding), and sends no CORS header, so no other site can read
+what it answers.
 
 Reports carry no hostname, username, serial number, MAC or IP, and paths are
 rewritten to `~`. That is enforced in CI, not just promised — see

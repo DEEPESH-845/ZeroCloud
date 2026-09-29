@@ -73,6 +73,8 @@ fn no_hostile_input_panics_a_parser() {
             let _ = zc_model::json::array_objects(&s, "a");
             let _ = zc_model::json::number_by_suffix(&s, "a");
             let _ = zc_model::json::escape(&s);
+            let _ = zc_model::json::members(&s);
+            let _ = zc_model::json::field(&s, "a").map(zc_model::json::unquote);
             // Calibration records arrive as community pull requests.
             let _ = zc_model::Fit::from_text(&s);
         }

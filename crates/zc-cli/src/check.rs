@@ -10,6 +10,10 @@ use zc_report::{Assumptions, Report, Row};
 
 const UBATCH: u32 = 512;
 const PROMPT: u32 = 2048;
+/// Rows shown when no `--top` is given. The catalog is large enough that
+/// printing all of it buries what a constrained machine can run under what it
+/// cannot. Shared with `zc serve`, which applies the same cut.
+pub const DEFAULT_TOP: usize = 20;
 
 /// Assemble the report every surface renders.
 ///
@@ -53,6 +57,37 @@ pub fn report<'a>(
     }
 }
 
+/// Every catalog prediction for this machine, ranked, with the count before
+/// any cut. One row per model unless `all_quants`.
+///
+/// Shared by `zc check`, the TUI and `zc serve`, so no surface can rank or
+/// collapse differently from another. `specs` is borrowed by every row, so the
+/// caller owns the catalog.
+pub fn rows<'a>(
+    specs: &'a [zc_model::ModelSpec],
+    m: &Machine,
+    fit: &Fit,
+    kv: KvPrecision,
+    all_quants: bool,
+) -> (Vec<Row<'a>>, usize) {
+    let mut models = Vec::new();
+    for spec in specs {
+        for quant in &spec.quants {
+            models.push(Row {
+                model_id: &spec.id,
+                quant,
+                prediction: predict::predict_with(spec, quant, &m.hw, kv, PROMPT, UBATCH, fit),
+            });
+        }
+    }
+    if !all_quants {
+        models = zc_report::best_per_model(models);
+    }
+    models.sort_by_key(zc_report::rank);
+    let total = models.len();
+    (models, total)
+}
+
 pub fn run(
     m: &Machine,
     fit: &Fit,
@@ -68,24 +103,7 @@ pub fn run(
     // want different sets: the TUI needs every quantisation so its `a` key has
     // something to toggle to, and the table wants one row per model. Rebuilding
     // is arithmetic over a few hundred rows and costs nothing measurable.
-    let build = |all_quants: bool| {
-        let mut models = Vec::new();
-        for spec in &specs {
-            for quant in &spec.quants {
-                models.push(Row {
-                    model_id: &spec.id,
-                    quant,
-                    prediction: predict::predict_with(spec, quant, &m.hw, kv, PROMPT, UBATCH, fit),
-                });
-            }
-        }
-        if !all_quants {
-            models = zc_report::best_per_model(models);
-        }
-        models.sort_by_key(zc_report::rank);
-        let total = models.len();
-        (models, total)
-    };
+    let build = |all_quants: bool| rows(&specs, m, fit, kv, all_quants);
 
     if tui {
         // Every quantisation, uncollapsed and uncut. The TUI collapses for
