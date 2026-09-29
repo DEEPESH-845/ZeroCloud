@@ -41,13 +41,13 @@ pub struct RamResult {
 #[inline]
 fn sum_ilp(s: &[u64]) -> u64 {
     let mut acc = [0u64; 8];
-    let mut it = s.chunks_exact(8);
-    for c in &mut it {
+    let (chunks, rest) = s.as_chunks::<8>();
+    for c in chunks {
         for k in 0..8 {
             acc[k] = acc[k].wrapping_add(c[k]);
         }
     }
-    let mut total = it.remainder().iter().fold(0u64, |a, &b| a.wrapping_add(b));
+    let mut total = rest.iter().fold(0u64, |a, &b| a.wrapping_add(b));
     for a in acc {
         total = total.wrapping_add(a);
     }

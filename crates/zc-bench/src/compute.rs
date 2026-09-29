@@ -88,7 +88,9 @@ fn fma_kernel(iters: u64) -> f32 {
 #[inline(never)]
 fn dot_i8(a: &[i8], b: &[i8]) -> i32 {
     let mut acc = [0i32; 4];
-    for (x, y) in a.chunks_exact(4).zip(b.chunks_exact(4)) {
+    let (xs, _) = a.as_chunks::<4>();
+    let (ys, _) = b.as_chunks::<4>();
+    for (x, y) in xs.iter().zip(ys) {
         for k in 0..4 {
             acc[k] = acc[k].wrapping_add(x[k] as i32 * y[k] as i32);
         }
